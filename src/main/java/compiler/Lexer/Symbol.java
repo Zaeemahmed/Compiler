@@ -2,30 +2,36 @@ package compiler.Lexer;
 
 public class Symbol {
 
-    private final String tokenType;
-    private final String value;
-
-    public Symbol(String type) {
-        this(type, null);
+    public enum TokenType {
+        ASSIGN, EQ, NEQ,
+        LT, LE, GT, GE,
+        AND, OR,
+        PLUS, MINUS, STAR, SLASH, MOD,
+        LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
+        DOT, SEMICOLON, COMMA,
+        EOF,
+        IDENTIFIER, INT, FLOAT, STRING, BOOL,
+        KW_FINAL, KW_COLL, KW_DEF, KW_FOR, KW_WHILE, KW_IF, KW_ELSE, KW_RETURN, KW_NOT, KW_ARRAY
     }
 
-    public Symbol(String tokenType, String value) {
-        this.tokenType = tokenType;
-        this.value = value;
+    private final TokenType type;
+    private final String lexeme;
+
+    public Symbol(TokenType type, String lexeme) {
+        this.type = type;
+        this.lexeme = lexeme;
     }
 
-    public String getTokenType() {
-        return tokenType;
+    public TokenType getType() {
+        return type;
     }
 
-    public String getValue() {
-        return value;
+    public String getLexeme() {
+        return lexeme;
     }
 
+    @Override
     public String toString() {
-        if (this.value == null) {
-            return "<" + this.tokenType + ">";
-        }
-        return "<" + this.tokenType + ", " + this.value + ">";
+        return type + (lexeme == null ? "" : " (" + lexeme + ")");
     }
 }
