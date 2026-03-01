@@ -11,7 +11,7 @@ public class Symbol {
         DOT, SEMICOLON, COMMA,
         EOF,
         IDENTIFIER, INT, FLOAT, STRING, BOOL,
-        KW_FINAL, KW_COLL, KW_DEF, KW_FOR, KW_WHILE, KW_IF, KW_ELSE, KW_RETURN, KW_NOT, KW_ARRAY
+        KW_FINAL, KW_DEF, KW_FOR, KW_WHILE, KW_IF, KW_ELSE, KW_RETURN, KW_NOT, KW_ARRAY
     }
 
     private final TokenType type;

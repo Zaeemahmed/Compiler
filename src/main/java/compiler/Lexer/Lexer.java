@@ -154,7 +154,121 @@ public class Lexer {
     }
 
     private Symbol readAlphaNumericOrLiteral() {
-        throw new UnsupportedOperationException("Literal/identifier reader not implemented yet");
+        if (currentChar == '"') {
+            return readStringLiteral();
+        }
+
+        if (Character.isDigit(currentChar) ||
+            (currentChar == '.' && Character.isDigit(peek()))) {
+            return readNumberLiteral();
+        }
+
+        if (isLowerCaseLetter(currentChar) || currentChar == '_') {
+            return readIdentifierOrKeyword();
+        }
+
+        throw new LexerException("Unexpected character: " + (char) currentChar);
+    }
+
+    private Symbol readStringLiteral() {
+        StringBuilder sb = new StringBuilder();
+        advance();
+
+        while (currentChar != -1 && currentChar != '"') {
+
+            if (currentChar == '\\') {
+                advance();
+                switch (currentChar) {
+                    case 'n': sb.append('\n'); break;
+                    case 't': sb.append('\t'); break;
+                    case '"': sb.append('"'); break;
+                    case '\\': sb.append('\\'); break;
+                    default:
+                        throw new LexerException("Invalid escape sequence: \\" + (char) currentChar);
+                }
+            } else {
+                sb.append((char) currentChar);
+            }
+
+            advance();
+        }
+
+        if (currentChar != '"') {
+            throw new LexerException("Unterminated string literal");
+        }
+
+        advance();
+
+        return new Symbol(Symbol.TokenType.STRING, sb.toString());
+    }
+
+    private Symbol readNumberLiteral() {
+        StringBuilder sb = new StringBuilder();
+        boolean isFloat = false;
+
+        if (currentChar == '.') {
+            isFloat = true;
+            sb.append('.');
+            advance();
+
+            if (!Character.isDigit(currentChar)) {
+                throw new LexerException("Invalid float literal");
+            }
+        }
+
+        while (Character.isDigit(currentChar)) {
+            sb.append((char) currentChar);
+            advance();
+        }
+
+        if (currentChar == '.') {
+            isFloat = true;
+            sb.append('.');
+            advance();
+
+            if (!Character.isDigit(currentChar)) {
+                throw new LexerException("Invalid float literal");
+            }
+
+            while (Character.isDigit(currentChar)) {
+                sb.append((char) currentChar);
+                advance();
+            }
+        }
+
+        if (isFloat) {
+            return new Symbol(Symbol.TokenType.FLOAT, sb.toString());
+        } else {
+            return new Symbol(Symbol.TokenType.INT, sb.toString());
+        }
+    }
+
+    private Symbol readIdentifierOrKeyword() {
+        StringBuilder sb = new StringBuilder();
+
+        while (isLetter(currentChar) ||
+            Character.isDigit(currentChar) ||
+            currentChar == '_') {
+            sb.append((char) currentChar);
+            advance();
+        }
+
+        String word = sb.toString();
+
+        if (word.equals("true") || word.equals("false")) {
+            return new Symbol(Symbol.TokenType.BOOL, word);
+        }
+
+        switch (word) {
+            case "def":
+                return new Symbol(Symbol.TokenType.KW_DEF, word);
+            case "final":
+                return new Symbol(Symbol.TokenType.KW_FINAL, word);
+            case "ARRAY":
+                return new Symbol(Symbol.TokenType.KW_ARRAY, word);
+        }
+
+        return new Symbol(Symbol.TokenType.IDENTIFIER, word);
     }
 
     private void advance() {
@@ -179,6 +293,10 @@ public class Lexer {
 
     private boolean isLetter(int c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    private boolean isLowerCaseLetter(int c) {
+        return (c >= 'a' && c <= 'z');
     }
 
     public static class LexerException extends RuntimeException {
