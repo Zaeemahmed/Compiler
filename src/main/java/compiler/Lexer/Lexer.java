@@ -163,7 +163,7 @@ public class Lexer {
             return readNumberLiteral();
         }
 
-        if (isLowerCaseLetter(currentChar) || currentChar == '_') {
+        if (isLetter(currentChar) || currentChar == '_') {
             return readIdentifierOrKeyword();
         }
 
