@@ -1,0 +1,32 @@
+Program = Statement*
+
+Statement =   VarDeclaration ";" 
+            | Assignment ";" 
+            | IfStmt 
+            | WhileStmt 
+            | ReturnStmt ";" 
+            | Expr ";"
+
+VarDeclaration = ["final"] Type Identifier ["=" Expr]
+
+Assignment = Identifier "=" Expr
+
+IfStmt = "if" "(" Expr ")" "{" Statement* "}" ["else" "{" Statement* "}"]
+
+WhileStmt = "while" "(" Expr ")" "{" Statement* "}"
+
+ReturnStmt = "return" [Expr];
+
+Expression = Expr ("+" | "-" | "*" | "/" | "==" | "!=" | "&&" | "||" | "<" | ">" | "<=" | ">=") Expr
+            | "(" Expr ")"
+            | Literal
+            | Identifier
+
+Literal = Integer | Float | Boolean | String
+
+Integer       = [0-9]+
+Float         = [0-9]* "." [0-9]+
+Boolean       = "true" | "false"
+String        = "\"" .* "\""
+Identifier    = [a-z_][a-zA-Z0-9_]*
+Type          = "INT" | "FLOAT" | "STRING" | "BOOLEAN"
