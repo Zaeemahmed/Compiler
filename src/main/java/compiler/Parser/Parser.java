@@ -16,11 +16,30 @@ public class Parser {
         current = lexer.getNextSymbol();
     }
 
+    private boolean check(Symbol.TokenType type) {
+        return current != null && current.getType() == type;
+    }
+
+    private boolean match(Symbol.TokenType type) {
+        if (check(type)) {
+            advance();
+            return true;
+        }
+        return false;
+    }
+
+    private void expect(Symbol.TokenType type, String message) {
+        if (!match(type)) {
+            throw new ParseException(message + " | found: " + current);
+        }
+    }
+
     public Object getAST() {
         return parseProgram();
     }
 
     private Object parseProgram() {
+        // TODO: parse top-level declarations/functions based on grammar.txt
         return null;
     }
 }
