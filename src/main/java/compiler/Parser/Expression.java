@@ -1,4 +1,4 @@
-package compiler.expression;
+package compiler.Parser;
 
 abstract class ExpressionNode {
     public abstract void print();
