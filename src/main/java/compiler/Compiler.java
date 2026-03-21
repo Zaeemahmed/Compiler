@@ -1,6 +1,8 @@
 package compiler;
+
 import compiler.Lexer.Lexer;
 import compiler.Lexer.Symbol;
+import compiler.Parser.AST;
 import compiler.Parser.Parser;
 
 import java.io.FileReader;
@@ -29,8 +31,8 @@ public class Compiler {
             try (Reader reader = new FileReader(args[1])) {
                 Lexer lexer = new Lexer(reader);
                 Parser parser = new Parser(lexer);
-                Object ast = parser.getAST();
-                System.out.println(ast);
+                AST ast = parser.getAST();
+                ast.print();
             } catch (Exception e) {
                 System.err.println("Parser error: " + e.getMessage());
                 System.exit(1);
