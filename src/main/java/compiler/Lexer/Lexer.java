@@ -4,6 +4,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PushbackReader;
 import java.io.Reader;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Lexer {
 
@@ -11,7 +13,7 @@ public class Lexer {
     private int currentChar;
 
     public Lexer(Reader input) {
-        this.reader = new PushbackReader(new BufferedReader(input), 3);
+        this.reader = new PushbackReader(new BufferedReader(input), 64);
         advance();
     }
 
@@ -22,9 +24,16 @@ public class Lexer {
             return new Symbol(Symbol.TokenType.EOF, "EOF");
         }
 
-        if (isLetter(currentChar) || currentChar == '_' || Character.isDigit(currentChar) || currentChar == '"'
-                || (currentChar == '.' && Character.isDigit(peek()))) {
-            return readAlphaNumericOrLiteral();
+        if (currentChar == '"') {
+            return readStringLiteral();
+        }
+
+        if (Character.isDigit(currentChar) || (currentChar == '.' && Character.isDigit(peek()))) {
+            return readNumberLiteral();
+        }
+
+        if (isLetter(currentChar) || currentChar == '_') {
+            return readIdentifierOrKeyword();
         }
 
         return readSymbolOrOperator();
@@ -50,27 +59,17 @@ public class Lexer {
     private Symbol readSymbolOrOperator() {
         switch (currentChar) {
             case '=':
-                if (peek() == '=') {
-                    advance();
-                    advance();
+                if (matchOperatorTail("=")) {
                     return new Symbol(Symbol.TokenType.EQ, "==");
-                } else if (peek() == '/') {
-                    advance();
-                    advance();
-                    if (currentChar == '=') {
-                        advance();
-                        return new Symbol(Symbol.TokenType.NEQ, "=/=");
-                    }
-                    throw new LexerException("Invalid operator, expected '=/='");
+                } else if (matchOperatorTail("/=")) {
+                    return new Symbol(Symbol.TokenType.NEQ, "=/=");
                 } else {
                     advance();
                     return new Symbol(Symbol.TokenType.ASSIGN, "=");
                 }
 
             case '<':
-                if (peek() == '=') {
-                    advance();
-                    advance();
+                if (matchOperatorTail("=")) {
                     return new Symbol(Symbol.TokenType.LE, "<=");
                 } else {
                     advance();
@@ -78,9 +77,7 @@ public class Lexer {
                 }
 
             case '>':
-                if (peek() == '=') {
-                    advance();
-                    advance();
+                if (matchOperatorTail("=")) {
                     return new Symbol(Symbol.TokenType.GE, ">=");
                 } else {
                     advance();
@@ -88,17 +85,13 @@ public class Lexer {
                 }
 
             case '&':
-                if (peek() == '&') {
-                    advance();
-                    advance();
+                if (matchOperatorTail("&")) {
                     return new Symbol(Symbol.TokenType.AND, "&&");
                 }
                 throw new LexerException("Invalid symbol '&'");
 
             case '|':
-                if (peek() == '|') {
-                    advance();
-                    advance();
+                if (matchOperatorTail("|")) {
                     return new Symbol(Symbol.TokenType.OR, "||");
                 }
                 throw new LexerException("Invalid symbol '|'");
@@ -158,8 +151,8 @@ public class Lexer {
             return readStringLiteral();
         }
 
-        if (Character.isDigit(currentChar) ||
-            (currentChar == '.' && Character.isDigit(peek()))) {
+        if (Character.isDigit(currentChar)
+            || (currentChar == '.' && Character.isDigit(peek()))) {
             return readNumberLiteral();
         }
 
@@ -246,9 +239,9 @@ public class Lexer {
     private Symbol readIdentifierOrKeyword() {
         StringBuilder sb = new StringBuilder();
 
-        while (isLetter(currentChar) ||
-            Character.isDigit(currentChar) ||
-            currentChar == '_') {
+        while (isLetter(currentChar)
+            || Character.isDigit(currentChar)
+            || currentChar == '_') {
             sb.append((char) currentChar);
             advance();
         }
@@ -264,8 +257,24 @@ public class Lexer {
                 return new Symbol(Symbol.TokenType.KW_DEF, word);
             case "final":
                 return new Symbol(Symbol.TokenType.KW_FINAL, word);
+            case "for":
+                return new Symbol(Symbol.TokenType.KW_FOR, word);
+            case "while":
+                return new Symbol(Symbol.TokenType.KW_WHILE, word);
+            case "if":
+                return new Symbol(Symbol.TokenType.KW_IF, word);
+            case "else":
+                return new Symbol(Symbol.TokenType.KW_ELSE, word);
+            case "return":
+                return new Symbol(Symbol.TokenType.KW_RETURN, word);
+            case "not":
+                return new Symbol(Symbol.TokenType.KW_NOT, word);
             case "ARRAY":
                 return new Symbol(Symbol.TokenType.KW_ARRAY, word);
+            case "new":
+                return new Symbol(Symbol.TokenType.KW_NEW, word);
+            case "coll":
+                return new Symbol(Symbol.TokenType.KW_COLL, word);
         }
 
         return new Symbol(Symbol.TokenType.IDENTIFIER, word);
@@ -289,6 +298,49 @@ public class Lexer {
         } catch (IOException e) {
             throw new LexerException("I/O error while peeking input", e);
         }
+    }
+
+    private boolean matchOperatorTail(String tail) {
+        List<Integer> consumed = new ArrayList<>();
+
+        try {
+            for (int index = 0; index < tail.length(); index++) {
+                int read = reader.read();
+
+                while (isInlineWhitespace(read)) {
+                    consumed.add(read);
+                    read = reader.read();
+                }
+
+                if (read != tail.charAt(index)) {
+                    if (read != -1) {
+                        consumed.add(read);
+                    }
+                    unread(consumed);
+                    return false;
+                }
+
+                consumed.add(read);
+            }
+
+            currentChar = reader.read();
+            return true;
+        } catch (IOException e) {
+            throw new LexerException("I/O error while matching operator", e);
+        }
+    }
+
+    private void unread(List<Integer> consumed) throws IOException {
+        for (int index = consumed.size() - 1; index >= 0; index--) {
+            int value = consumed.get(index);
+            if (value != -1) {
+                reader.unread(value);
+            }
+        }
+    }
+
+    private boolean isInlineWhitespace(int value) {
+        return value == ' ' || value == '\t';
     }
 
     private boolean isLetter(int c) {

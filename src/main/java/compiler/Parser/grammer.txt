@@ -1,10 +1,13 @@
 Program = Statement*
 
-Statement =   VarDeclaration ";" 
-            | Assignment ";" 
-            | IfStmt 
-            | WhileStmt 
-            | ReturnStmt ";" 
+Statement =   VarDeclaration ";"
+            | Assignment ";"
+            | IfStmt
+            | WhileStmt
+            | ForStmt
+            | ReturnStmt ";"
+            | FunctionDecl
+            | CollectionDecl
             | Expr ";"
 
 VarDeclaration = ["final"] Type Identifier ["=" Expr]
@@ -15,12 +18,34 @@ IfStmt = "if" "(" Expr ")" "{" Statement* "}" ["else" "{" Statement* "}"]
 
 WhileStmt = "while" "(" Expr ")" "{" Statement* "}"
 
-ReturnStmt = "return" [Expr];
+ForStmt = "for" "(" Identifier ";" Expr "->" Expr ";" Expr ")" "{" Statement* "}"
 
-Expression = Expr ("+" | "-" | "*" | "/" | "==" | "!=" | "&&" | "||" | "<" | ">" | "<=" | ">=") Expr
-            | "(" Expr ")"
-            | Literal
-            | Identifier
+ReturnStmt = "return" [Expr]
+
+FunctionDecl = "def" Identifier "(" [ParamList] ")" "{" Statement* "}"
+             | "def" Type Identifier "(" [ParamList] ")" "{" Statement* "}"
+
+ParamList = Param ("," Param)*
+
+Param = Type Identifier
+
+CollectionDecl = "coll" Identifier "{" (VarDeclaration ";")* "}"
+
+Expression = Expr ("+" | "-" | "*" | "/" | "%" | "==" | "=/=" | "&&" | "||" | "<" | ">" | "<=" | ">=") Expr
+           | "-" Expr
+           | "not" Expr
+           | "(" Expr ")"
+           | Literal
+           | Identifier
+           | Identifier "(" [ArgList] ")"
+           | Expr "[" Expr "]"
+           | Expr "." Identifier
+           | Type "ARRAY" "[" Expr "]"
+           | NewExpr
+
+ArgList = Expr ("," Expr)*
+
+NewExpr = "new" Identifier "(" ")"
 
 Literal = Integer | Float | Boolean | String
 
@@ -28,5 +53,7 @@ Integer       = [0-9]+
 Float         = [0-9]* "." [0-9]+
 Boolean       = "true" | "false"
 String        = "\"" .* "\""
+
 Identifier    = [a-z_][a-zA-Z0-9_]*
-Type          = "INT" | "FLOAT" | "STRING" | "BOOLEAN"
+
+Type = "INT" | "FLOAT" | "STRING" | "BOOLEAN" | "BOOL" | Identifier | Type "[]"

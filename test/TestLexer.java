@@ -1,11 +1,14 @@
-import static org.junit.Assert.assertNotNull;
+import compiler.Lexer.Lexer;
+import compiler.Lexer.Symbol;
 import org.junit.Test;
 
 import java.io.StringReader;
-import compiler.Lexer.Lexer;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 public class TestLexer {
-    
+
     @Test
     public void test() {
         String input = "var x int = 2;";
@@ -14,4 +17,14 @@ public class TestLexer {
         assertNotNull(lexer.getNextSymbol());
     }
 
+    @Test
+    public void allowsSpacesInsideNotEqualOperator() {
+        StringReader reader = new StringReader("value = /= 3;");
+        Lexer lexer = new Lexer(reader);
+
+        assertEquals(Symbol.TokenType.IDENTIFIER, lexer.getNextSymbol().getType());
+        assertEquals(Symbol.TokenType.NEQ, lexer.getNextSymbol().getType());
+        assertEquals(Symbol.TokenType.INT, lexer.getNextSymbol().getType());
+        assertEquals(Symbol.TokenType.SEMICOLON, lexer.getNextSymbol().getType());
+    }
 }
