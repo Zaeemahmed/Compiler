@@ -3,6 +3,9 @@ package compiler.Parser;
 import compiler.Lexer.Lexer;
 import compiler.Lexer.Symbol;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class Parser {
     private final Lexer lexer;
     private Symbol current;
@@ -85,7 +88,6 @@ public class Parser {
         if (s == null) return false;
 
         Symbol.TokenType t = s.getType();
-
         if ((t == Symbol.TokenType.INT
                 || t == Symbol.TokenType.FLOAT
                 || t == Symbol.TokenType.STRING
@@ -114,195 +116,309 @@ public class Parser {
                 || isKeyword(current, Symbol.TokenType.KW_NOT, "not");
     }
 
-    public Object getAST() {
-        parseProgram();
-        return "Syntax OK";
-    }
-
-    private void parseProgram() {
-        while (!isEOF()) {
-            parseStatement();
+    private String consumeOperator() {
+        String op = lexemeOf(current);
+        if (op == null) {
+            op = current.getType().name();
         }
-        expect(Symbol.TokenType.EOF, "Expected end of file");
+        advance();
+        return op;
     }
 
-    private void parseStatement() {
+    public AST getAST() {
+        ProgramNode program = parseProgram();
+        return new AST(program);
+    }
+
+    private ProgramNode parseProgram() {
+        List<StatementNode> statements = new ArrayList<>();
+
+        while (!isEOF()) {
+            statements.add(parseStatement());
+        }
+
+        expect(Symbol.TokenType.EOF, "Expected end of file");
+        return new ProgramNode(statements);
+    }
+
+    private StatementNode parseStatement() {
         if (startsVarDeclaration()) {
-            parseVarDeclaration();
+            StatementNode stmt = parseVarDeclaration();
             expect(Symbol.TokenType.SEMICOLON, "Expected ';' after variable declaration");
-            return;
+            return stmt;
         }
 
         if (startsAssignment()) {
-            parseAssignment();
+            StatementNode stmt = parseAssignment();
             expect(Symbol.TokenType.SEMICOLON, "Expected ';' after assignment");
-            return;
+            return stmt;
         }
 
         if (isKeyword(current, Symbol.TokenType.KW_IF, "if")) {
-            parseIfStatement();
-            return;
+            return parseIfStatement();
         }
 
         if (isKeyword(current, Symbol.TokenType.KW_WHILE, "while")) {
-            parseWhileStatement();
-            return;
+            return parseWhileStatement();
         }
 
         if (isKeyword(current, Symbol.TokenType.KW_RETURN, "return")) {
-            parseReturnStatement();
+            StatementNode stmt = parseReturnStatement();
             expect(Symbol.TokenType.SEMICOLON, "Expected ';' after return statement");
-            return;
+            return stmt;
         }
 
         if (startsExpression()) {
-            parseExpression();
+            ExpressionNode expr = parseExpression();
             expect(Symbol.TokenType.SEMICOLON, "Expected ';' after expression");
-            return;
+            return new ExpressionStatementNode(expr);
         }
 
         throw new ParseException("Invalid statement start: " + current);
     }
 
-    private void parseVarDeclaration() {
-        matchKeyword(Symbol.TokenType.KW_FINAL, "final");
-        parseType();
+    private VarDeclarationNode parseVarDeclaration() {
+        boolean isFinal = matchKeyword(Symbol.TokenType.KW_FINAL, "final");
+        String type = parseType();
+
+        String identifier = lexemeOf(current);
         expect(Symbol.TokenType.IDENTIFIER, "Expected identifier in variable declaration");
 
+        ExpressionNode value = null;
         if (match(Symbol.TokenType.ASSIGN)) {
-            parseExpression();
+            value = parseExpression();
         }
+
+        return new VarDeclarationNode(isFinal, type, identifier, value);
     }
 
-    private void parseType() {
-        if (isTypeToken(current)) {
-            advance();
-            return;
+    private String parseType() {
+        if (!isTypeToken(current)) {
+            throw new ParseException("Expected type keyword | found: " + current);
         }
-        throw new ParseException("Expected type keyword | found: " + current);
+
+        String type = lexemeOf(current);
+        advance();
+        return type;
     }
 
-    private void parseAssignment() {
+    private AssignmentNode parseAssignment() {
+        String identifier = lexemeOf(current);
         expect(Symbol.TokenType.IDENTIFIER, "Expected identifier on left side of assignment");
         expect(Symbol.TokenType.ASSIGN, "Expected '=' in assignment");
-        parseExpression();
+        ExpressionNode value = parseExpression();
+        return new AssignmentNode(identifier, value);
     }
 
-    private void parseIfStatement() {
+    private IfNode parseIfStatement() {
         expectKeyword(Symbol.TokenType.KW_IF, "if", "Expected 'if'");
         expect(Symbol.TokenType.LPAREN, "Expected '(' after if");
-        parseExpression();
+        ExpressionNode condition = parseExpression();
         expect(Symbol.TokenType.RPAREN, "Expected ')' after if condition");
-        parseBlock();
+
+        List<StatementNode> thenBranch = parseBlockStatements();
+        List<StatementNode> elseBranch = null;
 
         if (matchKeyword(Symbol.TokenType.KW_ELSE, "else")) {
-            parseBlock();
+            elseBranch = parseBlockStatements();
         }
+
+        return new IfNode(condition, thenBranch, elseBranch);
     }
 
-    private void parseWhileStatement() {
+    private WhileNode parseWhileStatement() {
         expectKeyword(Symbol.TokenType.KW_WHILE, "while", "Expected 'while'");
         expect(Symbol.TokenType.LPAREN, "Expected '(' after while");
-        parseExpression();
+        ExpressionNode condition = parseExpression();
         expect(Symbol.TokenType.RPAREN, "Expected ')' after while condition");
-        parseBlock();
+
+        List<StatementNode> body = parseBlockStatements();
+        return new WhileNode(condition, body);
     }
 
-    private void parseReturnStatement() {
+    private ReturnNode parseReturnStatement() {
         expectKeyword(Symbol.TokenType.KW_RETURN, "return", "Expected 'return'");
+
+        ExpressionNode value = null;
         if (!check(Symbol.TokenType.SEMICOLON)) {
-            parseExpression();
+            value = parseExpression();
         }
+
+        return new ReturnNode(value);
     }
 
-    private void parseBlock() {
+    private List<StatementNode> parseBlockStatements() {
         expect(Symbol.TokenType.LBRACE, "Expected '{' to start block");
+
+        List<StatementNode> statements = new ArrayList<>();
         while (!check(Symbol.TokenType.RBRACE) && !isEOF()) {
-            parseStatement();
+            statements.add(parseStatement());
         }
+
         expect(Symbol.TokenType.RBRACE, "Expected '}' to close block");
+        return statements;
     }
 
-    private void parseExpression() {
-        parseOr();
+    private ExpressionNode parseExpression() {
+        return parseOr();
     }
 
-    private void parseOr() {
-        parseAnd();
-        while (match(Symbol.TokenType.OR)) {
-            parseAnd();
+    private ExpressionNode parseOr() {
+        ExpressionNode expr = parseAnd();
+
+        while (check(Symbol.TokenType.OR)) {
+            String op = consumeOperator();
+            ExpressionNode right = parseAnd();
+            expr = new OperationNode(op, expr, right);
         }
+
+        return expr;
     }
 
-    private void parseAnd() {
-        parseEquality();
-        while (match(Symbol.TokenType.AND)) {
-            parseEquality();
+    private ExpressionNode parseAnd() {
+        ExpressionNode expr = parseEquality();
+
+        while (check(Symbol.TokenType.AND)) {
+            String op = consumeOperator();
+            ExpressionNode right = parseEquality();
+            expr = new OperationNode(op, expr, right);
         }
+
+        return expr;
     }
 
-    private void parseEquality() {
-        parseComparison();
+    private ExpressionNode parseEquality() {
+        ExpressionNode expr = parseComparison();
+
         while (check(Symbol.TokenType.EQ) || check(Symbol.TokenType.NEQ)) {
-            advance();
-            parseComparison();
+            String op = consumeOperator();
+            ExpressionNode right = parseComparison();
+            expr = new OperationNode(op, expr, right);
         }
+
+        return expr;
     }
 
-    private void parseComparison() {
-        parseAdditive();
+    private ExpressionNode parseComparison() {
+        ExpressionNode expr = parseAdditive();
+
         while (check(Symbol.TokenType.LT)
                 || check(Symbol.TokenType.LE)
                 || check(Symbol.TokenType.GT)
                 || check(Symbol.TokenType.GE)) {
-            advance();
-            parseAdditive();
+            String op = consumeOperator();
+            ExpressionNode right = parseAdditive();
+            expr = new OperationNode(op, expr, right);
         }
+
+        return expr;
     }
 
-    private void parseAdditive() {
-        parseMultiplicative();
+    private ExpressionNode parseAdditive() {
+        ExpressionNode expr = parseMultiplicative();
+
         while (check(Symbol.TokenType.PLUS) || check(Symbol.TokenType.MINUS)) {
-            advance();
-            parseMultiplicative();
+            String op = consumeOperator();
+            ExpressionNode right = parseMultiplicative();
+            expr = new OperationNode(op, expr, right);
         }
+
+        return expr;
     }
 
-    private void parseMultiplicative() {
-        parseUnary();
+    private ExpressionNode parseMultiplicative() {
+        ExpressionNode expr = parseUnary();
+
         while (check(Symbol.TokenType.STAR)
                 || check(Symbol.TokenType.SLASH)
                 || check(Symbol.TokenType.MOD)) {
+            String op = consumeOperator();
+            ExpressionNode right = parseUnary();
+            expr = new OperationNode(op, expr, right);
+        }
+
+        return expr;
+    }
+
+    private ExpressionNode parseUnary() {
+        if (check(Symbol.TokenType.MINUS)) {
+            String op = consumeOperator();
+            ExpressionNode right = parseUnary();
+            return new OperationNode(op, new IntegerNode(0), right);
+        }
+
+        if (isKeyword(current, Symbol.TokenType.KW_NOT, "not")) {
+            String op = lexemeOf(current);
             advance();
-            parseUnary();
+            ExpressionNode right = parseUnary();
+            return new OperationNode(op, new BooleanNode(false), right);
         }
+
+        return parsePrimary();
     }
 
-    private void parseUnary() {
-        if (match(Symbol.TokenType.MINUS) || matchKeyword(Symbol.TokenType.KW_NOT, "not")) {
-            parseUnary();
-            return;
-        }
-        parsePrimary();
-    }
-
-    private void parsePrimary() {
+    private ExpressionNode parsePrimary() {
         if (match(Symbol.TokenType.LPAREN)) {
-            parseExpression();
+            ExpressionNode expr = parseExpression();
             expect(Symbol.TokenType.RPAREN, "Expected ')' after expression");
-            return;
+            return expr;
         }
 
         if (isLiteral(current)) {
+            Symbol literal = current;
             advance();
-            return;
+            return buildLiteralNode(literal);
         }
 
         if (check(Symbol.TokenType.IDENTIFIER)) {
+            String name = lexemeOf(current);
             advance();
-            return;
+            return new IdentifierNode(name);
         }
 
         throw new ParseException("Expected primary expression, found: " + current);
+    }
+
+    private ExpressionNode buildLiteralNode(Symbol literal) {
+        String lex = lexemeOf(literal);
+        Symbol.TokenType type = literal.getType();
+
+        if ("true".equals(lex) || "false".equals(lex)) {
+            return new BooleanNode(Boolean.parseBoolean(lex));
+        }
+
+        if (type == Symbol.TokenType.INT) {
+            try {
+                return new IntegerNode(Integer.parseInt(lex));
+            } catch (NumberFormatException e) {
+                throw new ParseException("Invalid integer literal: " + lex);
+            }
+        }
+
+        if (type == Symbol.TokenType.FLOAT) {
+            try {
+                return new FloatNode(Float.parseFloat(lex));
+            } catch (NumberFormatException e) {
+                throw new ParseException("Invalid float literal: " + lex);
+            }
+        }
+
+        if (type == Symbol.TokenType.STRING) {
+            return new StringNode(stripQuotes(lex));
+        }
+
+        if (type == Symbol.TokenType.BOOL) {
+            return new BooleanNode(Boolean.parseBoolean(lex));
+        }
+
+        throw new ParseException("Unsupported literal: " + literal);
+    }
+
+    private String stripQuotes(String s) {
+        if (s == null) return null;
+        if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            return s.substring(1, s.length() - 1);
+        }
+        return s;
     }
 }
