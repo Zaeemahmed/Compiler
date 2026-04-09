@@ -4,6 +4,7 @@ import compiler.Lexer.Lexer;
 import compiler.Lexer.Symbol;
 import compiler.Parser.AST;
 import compiler.Parser.Parser;
+import compiler.Parser.SemanticAnalyzer;
 
 import java.io.FileReader;
 import java.io.Reader;
@@ -40,7 +41,23 @@ public class Compiler {
             return;
         }
 
+        if (args.length == 2 && "-semantic".equals(args[0])) {
+            try (Reader reader = new FileReader(args[1])) {
+                Lexer lexer = new Lexer(reader);
+                Parser parser = new Parser(lexer);
+                AST ast = parser.getAST();
+                SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer();
+                semanticAnalyzer.analyze(ast);
+                System.out.println("Semantic analysis OK");
+            } catch (Exception e) {
+                System.err.println(e.getMessage());
+                System.exit(2);
+            }
+            return;
+        }
+
         System.out.println("Usage: ./gradlew run --args='-lexer path/to/file'");
         System.out.println("   or: ./gradlew run --args='-parser path/to/file'");
+        System.out.println("   or: ./gradlew run --args='-semantic path/to/file'");
     }
 }

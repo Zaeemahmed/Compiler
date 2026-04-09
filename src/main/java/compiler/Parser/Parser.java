@@ -57,10 +57,14 @@ public class Parser {
     }
 
     private boolean isKeyword(Symbol s, Symbol.TokenType tokenType, String lexeme) {
-        if (s == null) return false;
-        return s.getType() == tokenType || hasLexeme(s, lexeme);
+    if (s == null) return false;
+
+    if (tokenType == Symbol.TokenType.IDENTIFIER) {
+        return hasLexeme(s, lexeme);
     }
 
+    return s.getType() == tokenType || hasLexeme(s, lexeme);
+}
     private boolean matchKeyword(Symbol.TokenType tokenType, String lexeme) {
         if (isKeyword(current, tokenType, lexeme)) {
             advance();
@@ -76,12 +80,17 @@ public class Parser {
     }
 
     private boolean isTypeToken(Symbol s) {
+        if (s == null) return false;
+
         String lex = lexemeOf(s);
-        return "INT".equals(lex)
-                || "FLOAT".equals(lex)
-                || "STRING".equals(lex)
-                || "BOOLEAN".equals(lex)
-                || "BOOL".equals(lex);
+        if ("INT".equals(lex) || "FLOAT".equals(lex) || "STRING".equals(lex) || "BOOLEAN".equals(lex) || "BOOL".equals(lex)) {
+            return true;
+        }
+
+        return s.getType() == Symbol.TokenType.IDENTIFIER
+                && lex != null
+                && !lex.isEmpty()
+                && Character.isUpperCase(lex.charAt(0));
     }
 
     private boolean isLiteral(Symbol s) {
@@ -118,9 +127,7 @@ public class Parser {
 
     private String consumeOperator() {
         String op = lexemeOf(current);
-        if (op == null) {
-            op = current.getType().name();
-        }
+        if (op == null) op = current.getType().name();
         advance();
         return op;
     }
@@ -134,7 +141,13 @@ public class Parser {
         List<StatementNode> statements = new ArrayList<>();
 
         while (!isEOF()) {
-            statements.add(parseStatement());
+            if (isKeyword(current, Symbol.TokenType.IDENTIFIER, "coll")) {
+                statements.add(parseCollectionDeclaration());
+            } else if (isKeyword(current, Symbol.TokenType.KW_DEF, "def")) {
+                statements.add(parseFunctionDeclaration());
+            } else {
+                statements.add(parseStatement());
+            }
         }
 
         expect(Symbol.TokenType.EOF, "Expected end of file");
@@ -175,6 +188,64 @@ public class Parser {
         }
 
         throw new ParseException("Invalid statement start: " + current);
+    }
+
+    private CollectionNode parseCollectionDeclaration() {
+        expectKeyword(Symbol.TokenType.IDENTIFIER, "coll", "Expected 'coll'");
+
+        String name = lexemeOf(current);
+        expect(Symbol.TokenType.IDENTIFIER, "Expected collection name");
+
+        expect(Symbol.TokenType.LBRACE, "Expected '{' after collection name");
+
+        List<VarDeclarationNode> fields = new ArrayList<>();
+        while (!check(Symbol.TokenType.RBRACE) && !isEOF()) {
+            fields.add(parseVarDeclaration());
+            expect(Symbol.TokenType.SEMICOLON, "Expected ';' after collection field");
+        }
+
+        expect(Symbol.TokenType.RBRACE, "Expected '}' after collection body");
+        return new CollectionNode(name, fields);
+    }
+
+    private FunctionNode parseFunctionDeclaration() {
+        expectKeyword(Symbol.TokenType.KW_DEF, "def", "Expected 'def'");
+
+        String returnType = "void";
+        if (isTypeToken(current)) {
+            returnType = parseType();
+        }
+
+        String name = lexemeOf(current);
+        expect(Symbol.TokenType.IDENTIFIER, "Expected function name");
+
+        expect(Symbol.TokenType.LPAREN, "Expected '(' after function name");
+        List<VarDeclarationNode> parameters = parseParameters();
+        expect(Symbol.TokenType.RPAREN, "Expected ')' after parameters");
+
+        List<StatementNode> body = parseBlockStatements();
+        return new FunctionNode(name, returnType, parameters, body);
+    }
+
+    private List<VarDeclarationNode> parseParameters() {
+        List<VarDeclarationNode> parameters = new ArrayList<>();
+
+        if (check(Symbol.TokenType.RPAREN)) {
+            return parameters;
+        }
+
+        while (true) {
+            String type = parseType();
+            String identifier = lexemeOf(current);
+            expect(Symbol.TokenType.IDENTIFIER, "Expected parameter name");
+            parameters.add(new VarDeclarationNode(false, type, identifier, null));
+
+            if (!match(Symbol.TokenType.COMMA)) {
+                break;
+            }
+        }
+
+        return parameters;
     }
 
     private VarDeclarationNode parseVarDeclaration() {
@@ -373,10 +444,34 @@ public class Parser {
         if (check(Symbol.TokenType.IDENTIFIER)) {
             String name = lexemeOf(current);
             advance();
+
+            if (match(Symbol.TokenType.LPAREN)) {
+                List<ExpressionNode> arguments = parseArguments();
+                expect(Symbol.TokenType.RPAREN, "Expected ')' after arguments");
+                return new FunctionCallNode(name, arguments);
+            }
+
             return new IdentifierNode(name);
         }
 
         throw new ParseException("Expected primary expression, found: " + current);
+    }
+
+    private List<ExpressionNode> parseArguments() {
+        List<ExpressionNode> arguments = new ArrayList<>();
+
+        if (check(Symbol.TokenType.RPAREN)) {
+            return arguments;
+        }
+
+        while (true) {
+            arguments.add(parseExpression());
+            if (!match(Symbol.TokenType.COMMA)) {
+                break;
+            }
+        }
+
+        return arguments;
     }
 
     private ExpressionNode buildLiteralNode(Symbol literal) {
@@ -388,19 +483,11 @@ public class Parser {
         }
 
         if (type == Symbol.TokenType.INT) {
-            try {
-                return new IntegerNode(Integer.parseInt(lex));
-            } catch (NumberFormatException e) {
-                throw new ParseException("Invalid integer literal: " + lex);
-            }
+            return new IntegerNode(Integer.parseInt(lex));
         }
 
         if (type == Symbol.TokenType.FLOAT) {
-            try {
-                return new FloatNode(Float.parseFloat(lex));
-            } catch (NumberFormatException e) {
-                throw new ParseException("Invalid float literal: " + lex);
-            }
+            return new FloatNode(Float.parseFloat(lex));
         }
 
         if (type == Symbol.TokenType.STRING) {

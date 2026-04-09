@@ -1,0 +1,12 @@
+coll Point {
+  INT x;
+  INT y;
+}
+INT g = 1;
+def INT add(INT a, INT b) {
+  INT c = a + b;
+  return c;
+}
+def main() {
+  INT x = add(1, 2);
+}

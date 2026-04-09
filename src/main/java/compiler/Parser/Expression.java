@@ -1,5 +1,7 @@
 package compiler.expression;
 
+import java.util.List;
+
 abstract class ExpressionNode {
     public abstract void print();
 }
@@ -18,8 +20,8 @@ class OperationNode extends ExpressionNode {
     @Override
     public void print() {
         System.out.println("Operation: " + operator);
-        left.print();
-        right.print();
+        if (left != null) left.print();
+        if (right != null) right.print();
     }
 }
 
@@ -85,5 +87,23 @@ class StringNode extends ExpressionNode {
     @Override
     public void print() {
         System.out.println("String: " + value);
+    }
+}
+
+class FunctionCallNode extends ExpressionNode {
+    String name;
+    List<ExpressionNode> arguments;
+
+    public FunctionCallNode(String name, List<ExpressionNode> arguments) {
+        this.name = name;
+        this.arguments = arguments;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("FunctionCall: " + name);
+        for (ExpressionNode arg : arguments) {
+            arg.print();
+        }
     }
 }

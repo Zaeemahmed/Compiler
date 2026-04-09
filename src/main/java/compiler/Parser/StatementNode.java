@@ -19,6 +19,22 @@ class VarDeclarationNode extends StatementNode {
         this.value = value;
     }
 
+    public boolean isFinal() {
+        return isFinal;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public String getIdentifier() {
+        return identifier;
+    }
+
+    public ExpressionNode getValue() {
+        return value;
+    }
+
     @Override
     public void print() {
         System.out.println("VarDeclaration: " + (isFinal ? "final " : "") + type + " " + identifier);
@@ -35,6 +51,14 @@ class AssignmentNode extends StatementNode {
     public AssignmentNode(String identifier, ExpressionNode value) {
         this.identifier = identifier;
         this.value = value;
+    }
+
+    public String getIdentifier() {
+        return identifier;
+    }
+
+    public ExpressionNode getValue() {
+        return value;
     }
 
     @Override
@@ -55,6 +79,18 @@ class IfNode extends StatementNode {
         this.condition = condition;
         this.thenBranch = thenBranch;
         this.elseBranch = elseBranch;
+    }
+
+    public ExpressionNode getCondition() {
+        return condition;
+    }
+
+    public List<StatementNode> getThenBranch() {
+        return thenBranch;
+    }
+
+    public List<StatementNode> getElseBranch() {
+        return elseBranch;
     }
 
     @Override
@@ -87,6 +123,14 @@ class WhileNode extends StatementNode {
         this.body = body;
     }
 
+    public ExpressionNode getCondition() {
+        return condition;
+    }
+
+    public List<StatementNode> getBody() {
+        return body;
+    }
+
     @Override
     public void print() {
         System.out.println("While Statement:");
@@ -98,11 +142,70 @@ class WhileNode extends StatementNode {
     }
 }
 
+class ForNode extends StatementNode {
+    private final String identifier;
+    private final ExpressionNode rangeStart;
+    private final ExpressionNode rangeEnd;
+    private final ExpressionNode update;
+    private final List<StatementNode> body;
+
+    public ForNode(String identifier,
+                   ExpressionNode rangeStart,
+                   ExpressionNode rangeEnd,
+                   ExpressionNode update,
+                   List<StatementNode> body) {
+        this.identifier = identifier;
+        this.rangeStart = rangeStart;
+        this.rangeEnd = rangeEnd;
+        this.update = update;
+        this.body = body;
+    }
+
+    public String getIdentifier() {
+        return identifier;
+    }
+
+    public ExpressionNode getRangeStart() {
+        return rangeStart;
+    }
+
+    public ExpressionNode getRangeEnd() {
+        return rangeEnd;
+    }
+
+    public ExpressionNode getUpdate() {
+        return update;
+    }
+
+    public List<StatementNode> getBody() {
+        return body;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("For Statement: " + identifier);
+        System.out.println("Range Start:");
+        rangeStart.print();
+        System.out.println("Range End:");
+        rangeEnd.print();
+        System.out.println("Update:");
+        update.print();
+        System.out.println("Body:");
+        for (StatementNode stmt : body) {
+            stmt.print();
+        }
+    }
+}
+
 class ReturnNode extends StatementNode {
     private final ExpressionNode value;
 
     public ReturnNode(ExpressionNode value) {
         this.value = value;
+    }
+
+    public ExpressionNode getValue() {
+        return value;
     }
 
     @Override
@@ -121,9 +224,82 @@ class ExpressionStatementNode extends StatementNode {
         this.expression = expression;
     }
 
+    public ExpressionNode getExpression() {
+        return expression;
+    }
+
     @Override
     public void print() {
         System.out.println("Expression Statement:");
         expression.print();
+    }
+}
+
+class FunctionNode extends StatementNode {
+    String name;
+    String returnType;
+    List<VarDeclarationNode> parameters;
+    List<StatementNode> body;
+
+    public FunctionNode(String name, String returnType, List<VarDeclarationNode> parameters, List<StatementNode> body) {
+        this.name = name;
+        this.returnType = returnType;
+        this.parameters = parameters;
+        this.body = body;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getReturnType() {
+        return returnType;
+    }
+
+    public List<VarDeclarationNode> getParameters() {
+        return parameters;
+    }
+
+    public List<StatementNode> getBody() {
+        return body;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("Function: " + name + " returns " + returnType);
+        System.out.println("Parameters:");
+        for (VarDeclarationNode param : parameters) {
+            param.print();
+        }
+        System.out.println("Body:");
+        for (StatementNode stmt : body) {
+            stmt.print();
+        }
+    }
+}
+
+class CollectionNode extends StatementNode {
+    String name;
+    List<VarDeclarationNode> fields;
+
+    public CollectionNode(String name, List<VarDeclarationNode> fields) {
+        this.name = name;
+        this.fields = fields;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public List<VarDeclarationNode> getFields() {
+        return fields;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("Collection: " + name);
+        for (VarDeclarationNode field : fields) {
+            field.print();
+        }
     }
 }
