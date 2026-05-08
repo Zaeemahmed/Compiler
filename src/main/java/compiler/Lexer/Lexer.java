@@ -100,6 +100,11 @@ public class Lexer {
                 advance();
                 return new Symbol(Symbol.TokenType.PLUS, "+");
             case '-':
+                if (peek() == '>') {
+                    advance();
+                    advance();
+                    return new Symbol(Symbol.TokenType.RARROW, "->");
+                }
                 advance();
                 return new Symbol(Symbol.TokenType.MINUS, "-");
             case '*':
@@ -218,6 +223,26 @@ public class Lexer {
             isFloat = true;
             sb.append('.');
             advance();
+
+            if (!Character.isDigit(currentChar)) {
+                throw new LexerException("Invalid float literal");
+            }
+
+            while (Character.isDigit(currentChar)) {
+                sb.append((char) currentChar);
+                advance();
+            }
+        }
+
+        if (currentChar == 'e' || currentChar == 'E') {
+            isFloat = true;
+            sb.append((char) currentChar);
+            advance();
+
+            if (currentChar == '+' || currentChar == '-') {
+                sb.append((char) currentChar);
+                advance();
+            }
 
             if (!Character.isDigit(currentChar)) {
                 throw new LexerException("Invalid float literal");

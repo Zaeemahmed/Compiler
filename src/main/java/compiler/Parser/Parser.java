@@ -10,22 +10,16 @@ public class Parser {
     private final Lexer lexer;
     private Symbol current;
     private Symbol next;
-    private Symbol nextNext;
-    private Symbol nextNextNext;
 
     public Parser(Lexer lexer) {
         this.lexer = lexer;
         this.current = lexer.getNextSymbol();
         this.next = lexer.getNextSymbol();
-        this.nextNext = lexer.getNextSymbol();
-        this.nextNextNext = lexer.getNextSymbol();
     }
 
     private void advance() {
         current = next;
-        next = nextNext;
-        nextNext = nextNextNext;
-        nextNextNext = lexer.getNextSymbol();
+        next = lexer.getNextSymbol();
     }
 
     private boolean check(Symbol.TokenType type) {
@@ -34,21 +28,6 @@ public class Parser {
 
     private boolean checkNext(Symbol.TokenType type) {
         return next != null && next.getType() == type;
-    }
-
-    private Symbol lookahead(int distance) {
-        return switch (distance) {
-            case 0 -> current;
-            case 1 -> next;
-            case 2 -> nextNext;
-            case 3 -> nextNextNext;
-            default -> null;
-        };
-    }
-
-    private boolean checkLookahead(int distance, Symbol.TokenType type) {
-        Symbol symbol = lookahead(distance);
-        return symbol != null && symbol.getType() == type;
     }
 
     private boolean match(Symbol.TokenType type) {
@@ -79,9 +58,14 @@ public class Parser {
 
     private boolean isKeyword(Symbol s, Symbol.TokenType tokenType, String lexeme) {
         if (s == null) return false;
+
+        if (tokenType == Symbol.TokenType.IDENTIFIER) {
+            return hasLexeme(s, lexeme);
+        }
+
         return s.getType() == tokenType || hasLexeme(s, lexeme);
     }
-
+    
     private boolean matchKeyword(Symbol.TokenType tokenType, String lexeme) {
         if (isKeyword(current, tokenType, lexeme)) {
             advance();
@@ -100,26 +84,14 @@ public class Parser {
         if (s == null) return false;
 
         String lex = lexemeOf(s);
-        if ("def".equals(lex)
-                || "final".equals(lex)
-                || "for".equals(lex)
-                || "while".equals(lex)
-                || "if".equals(lex)
-                || "else".equals(lex)
-                || "return".equals(lex)
-                || "not".equals(lex)
-                || "new".equals(lex)
-                || "coll".equals(lex)
-                || "ARRAY".equals(lex)) {
-            return false;
+        if ("INT".equals(lex) || "FLOAT".equals(lex) || "STRING".equals(lex) || "BOOLEAN".equals(lex) || "BOOL".equals(lex)) {
+            return true;
         }
 
-        return "INT".equals(lex)
-                || "FLOAT".equals(lex)
-                || "STRING".equals(lex)
-                || "BOOLEAN".equals(lex)
-                || "BOOL".equals(lex)
-                || s.getType() == Symbol.TokenType.IDENTIFIER;
+        return s.getType() == Symbol.TokenType.IDENTIFIER
+                && lex != null
+                && !lex.isEmpty()
+                && Character.isUpperCase(lex.charAt(0));
     }
 
     private boolean isLiteral(Symbol s) {
@@ -139,11 +111,10 @@ public class Parser {
 
     private boolean startsVarDeclaration() {
         if (isKeyword(current, Symbol.TokenType.KW_FINAL, "final")) return true;
-        return isTypeToken(current)
-                && (checkNext(Symbol.TokenType.IDENTIFIER)
-            || (checkNext(Symbol.TokenType.LBRACKET)
-                && checkLookahead(2, Symbol.TokenType.RBRACKET)
-                && checkLookahead(3, Symbol.TokenType.IDENTIFIER)));
+        if (!isTypeToken(current)) {
+            return false;
+        }
+        return checkNext(Symbol.TokenType.IDENTIFIER) || checkNext(Symbol.TokenType.LBRACKET);
     }
 
     private boolean startsAssignment() {
@@ -153,20 +124,15 @@ public class Parser {
     private boolean startsExpression() {
         return check(Symbol.TokenType.LPAREN)
                 || check(Symbol.TokenType.IDENTIFIER)
+                || isTypeToken(current)
                 || isLiteral(current)
                 || check(Symbol.TokenType.MINUS)
                 || isKeyword(current, Symbol.TokenType.KW_NOT, "not");
     }
 
-    private boolean startsRangeArrow() {
-        return check(Symbol.TokenType.MINUS) && checkNext(Symbol.TokenType.GT);
-    }
-
     private String consumeOperator() {
         String op = lexemeOf(current);
-        if (op == null) {
-            op = current.getType().name();
-        }
+        if (op == null) op = current.getType().name();
         advance();
         return op;
     }
@@ -180,7 +146,13 @@ public class Parser {
         List<StatementNode> statements = new ArrayList<>();
 
         while (!isEOF()) {
-            statements.add(parseStatement());
+            if (isKeyword(current, Symbol.TokenType.IDENTIFIER, "coll")) {
+                statements.add(parseCollectionDeclaration());
+            } else if (isKeyword(current, Symbol.TokenType.KW_DEF, "def")) {
+                statements.add(parseFunctionDeclaration());
+            } else {
+                statements.add(parseStatement());
+            }
         }
 
         expect(Symbol.TokenType.EOF, "Expected end of file");
@@ -188,32 +160,6 @@ public class Parser {
     }
 
     private StatementNode parseStatement() {
-        if (startsCollection()) {
-            return parseCollection();
-        }
-
-        if (startsFunction()) {
-            return parseFunction();
-        }
-
-        if (isKeyword(current, Symbol.TokenType.KW_IF, "if")) {
-            return parseIfStatement();
-        }
-
-        if (isKeyword(current, Symbol.TokenType.KW_WHILE, "while")) {
-            return parseWhileStatement();
-        }
-
-        if (isKeyword(current, Symbol.TokenType.KW_FOR, "for")) {
-            return parseForStatement();
-        }
-
-        if (isKeyword(current, Symbol.TokenType.KW_RETURN, "return")) {
-            StatementNode stmt = parseReturnStatement();
-            expect(Symbol.TokenType.SEMICOLON, "Expected ';' after return statement");
-            return stmt;
-        }
-
         if (startsVarDeclaration()) {
             StatementNode stmt = parseVarDeclaration();
             expect(Symbol.TokenType.SEMICOLON, "Expected ';' after variable declaration");
@@ -226,6 +172,24 @@ public class Parser {
             return stmt;
         }
 
+        if (isKeyword(current, Symbol.TokenType.KW_FOR, "for")) {
+            return parseForStatement();
+        }
+
+        if (isKeyword(current, Symbol.TokenType.KW_IF, "if")) {
+            return parseIfStatement();
+        }
+
+        if (isKeyword(current, Symbol.TokenType.KW_WHILE, "while")) {
+            return parseWhileStatement();
+        }
+
+        if (isKeyword(current, Symbol.TokenType.KW_RETURN, "return")) {
+            StatementNode stmt = parseReturnStatement();
+            expect(Symbol.TokenType.SEMICOLON, "Expected ';' after return statement");
+            return stmt;
+        }
+
         if (startsExpression()) {
             ExpressionNode expr = parseExpression();
             expect(Symbol.TokenType.SEMICOLON, "Expected ';' after expression");
@@ -233,6 +197,64 @@ public class Parser {
         }
 
         throw new ParseException("Invalid statement start: " + current);
+    }
+
+    private CollectionNode parseCollectionDeclaration() {
+        expectKeyword(Symbol.TokenType.IDENTIFIER, "coll", "Expected 'coll'");
+
+        String name = lexemeOf(current);
+        expect(Symbol.TokenType.IDENTIFIER, "Expected collection name");
+
+        expect(Symbol.TokenType.LBRACE, "Expected '{' after collection name");
+
+        List<VarDeclarationNode> fields = new ArrayList<>();
+        while (!check(Symbol.TokenType.RBRACE) && !isEOF()) {
+            fields.add(parseVarDeclaration());
+            expect(Symbol.TokenType.SEMICOLON, "Expected ';' after collection field");
+        }
+
+        expect(Symbol.TokenType.RBRACE, "Expected '}' after collection body");
+        return new CollectionNode(name, fields);
+    }
+
+    private FunctionNode parseFunctionDeclaration() {
+        expectKeyword(Symbol.TokenType.KW_DEF, "def", "Expected 'def'");
+
+        String returnType = "void";
+        if (isTypeToken(current)) {
+            returnType = parseType();
+        }
+
+        String name = lexemeOf(current);
+        expect(Symbol.TokenType.IDENTIFIER, "Expected function name");
+
+        expect(Symbol.TokenType.LPAREN, "Expected '(' after function name");
+        List<VarDeclarationNode> parameters = parseParameters();
+        expect(Symbol.TokenType.RPAREN, "Expected ')' after parameters");
+
+        List<StatementNode> body = parseBlockStatements();
+        return new FunctionNode(name, returnType, parameters, body);
+    }
+
+    private List<VarDeclarationNode> parseParameters() {
+        List<VarDeclarationNode> parameters = new ArrayList<>();
+
+        if (check(Symbol.TokenType.RPAREN)) {
+            return parameters;
+        }
+
+        while (true) {
+            String type = parseType();
+            String identifier = lexemeOf(current);
+            expect(Symbol.TokenType.IDENTIFIER, "Expected parameter name");
+            parameters.add(new VarDeclarationNode(false, type, identifier, null));
+
+            if (!match(Symbol.TokenType.COMMA)) {
+                break;
+            }
+        }
+
+        return parameters;
     }
 
     private VarDeclarationNode parseVarDeclaration() {
@@ -243,7 +265,6 @@ public class Parser {
         expect(Symbol.TokenType.IDENTIFIER, "Expected identifier in variable declaration");
 
         ExpressionNode value = null;
-
         if (match(Symbol.TokenType.ASSIGN)) {
             value = parseExpression();
         }
@@ -258,12 +279,13 @@ public class Parser {
 
         String type = lexemeOf(current);
         advance();
-
-        if (match(Symbol.TokenType.LBRACKET)) {
-            expect(Symbol.TokenType.RBRACKET, "Expected ']'");
-            type += "[]";
+        
+        while (check(Symbol.TokenType.LBRACKET)) {
+            advance(); // consume [
+            expect(Symbol.TokenType.RBRACKET, "Expected ']' after array type");
+            type = type + "[]";
         }
-
+        
         return type;
     }
 
@@ -301,27 +323,6 @@ public class Parser {
         return new WhileNode(condition, body);
     }
 
-    private ForNode parseForStatement() {
-        expectKeyword(Symbol.TokenType.KW_FOR, "for", "Expected 'for'");
-        expect(Symbol.TokenType.LPAREN, "Expected '(' after for");
-
-        String identifier = lexemeOf(current);
-        expect(Symbol.TokenType.IDENTIFIER, "Expected loop variable in for statement");
-        expect(Symbol.TokenType.SEMICOLON, "Expected ';' after loop variable");
-
-        ExpressionNode rangeStart = parseExpression();
-        expect(Symbol.TokenType.MINUS, "Expected '->' in for range");
-        expect(Symbol.TokenType.GT, "Expected '->' in for range");
-        ExpressionNode rangeEnd = parseExpression();
-        expect(Symbol.TokenType.SEMICOLON, "Expected ';' after for range");
-
-        ExpressionNode update = parseExpression();
-        expect(Symbol.TokenType.RPAREN, "Expected ')' after for update");
-
-        List<StatementNode> body = parseBlockStatements();
-        return new ForNode(identifier, rangeStart, rangeEnd, update, body);
-    }
-
     private ReturnNode parseReturnStatement() {
         expectKeyword(Symbol.TokenType.KW_RETURN, "return", "Expected 'return'");
 
@@ -331,6 +332,31 @@ public class Parser {
         }
 
         return new ReturnNode(value);
+    }
+
+    private ForNode parseForStatement() {
+        expectKeyword(Symbol.TokenType.KW_FOR, "for", "Expected 'for'");
+        expect(Symbol.TokenType.LPAREN, "Expected '(' after for");
+
+        String identifier = lexemeOf(current);
+        expect(Symbol.TokenType.IDENTIFIER, "Expected loop variable name");
+        expect(Symbol.TokenType.SEMICOLON, "Expected ';' after loop variable");
+
+        ExpressionNode rangeStart = parseExpression();
+
+        if (!match(Symbol.TokenType.RARROW)) {
+            expect(Symbol.TokenType.MINUS, "Expected '->' in for range");
+            expect(Symbol.TokenType.GT, "Expected '>' after '-' in for range");
+        }
+
+        ExpressionNode rangeEnd = parseExpression();
+        expect(Symbol.TokenType.SEMICOLON, "Expected ';' after for range");
+
+        ExpressionNode update = parseExpression();
+        expect(Symbol.TokenType.RPAREN, "Expected ')' after for header");
+
+        List<StatementNode> body = parseBlockStatements();
+        return new ForNode(identifier, rangeStart, rangeEnd, update, body);
     }
 
     private List<StatementNode> parseBlockStatements() {
@@ -403,7 +429,7 @@ public class Parser {
     private ExpressionNode parseAdditive() {
         ExpressionNode expr = parseMultiplicative();
 
-        while (check(Symbol.TokenType.PLUS) || (check(Symbol.TokenType.MINUS) && !startsRangeArrow())) {
+        while (check(Symbol.TokenType.PLUS) || check(Symbol.TokenType.MINUS)) {
             String op = consumeOperator();
             ExpressionNode right = parseMultiplicative();
             expr = new OperationNode(op, expr, right);
@@ -440,55 +466,13 @@ public class Parser {
             return new OperationNode(op, new BooleanNode(false), right);
         }
 
-        ExpressionNode expr = parsePrimary();
-
-        while (true) {
-            if (check(Symbol.TokenType.LBRACKET)) {
-                advance();
-                if (check(Symbol.TokenType.RBRACKET)) {
-                    throw new ParseException("Array index cannot be empty");
-                }
-
-                ExpressionNode index = parseExpression();
-
-                if (!check(Symbol.TokenType.RBRACKET)) {
-                    throw new ParseException("Expected ']'");
-                }
-                advance();
-
-                expr = new ArrayAccessNode(expr, index);
-            } else if (match(Symbol.TokenType.DOT)) {
-                String field = lexemeOf(current);
-                expect(Symbol.TokenType.IDENTIFIER, "Expected field name");
-                expr = new FieldAccessNode(expr, field);
-            } else {
-                break;
-            }
-        }
-
-        return expr;
+        return parsePrimary();
     }
 
     private ExpressionNode parsePrimary() {
-        if (isTypeToken(current) && "ARRAY".equals(lexemeOf(next))) {
-            String type = lexemeOf(current);
-            advance();
-            return parseArrayLiteral(type);
-        }
-
-        if (isKeyword(current, Symbol.TokenType.KW_NEW, "new")) {
-            advance();
-            String className = lexemeOf(current);
-            expect(Symbol.TokenType.IDENTIFIER, "Expected class name");
-
-            expect(Symbol.TokenType.LPAREN, "Expected '('");
-            expect(Symbol.TokenType.RPAREN, "Expected ')'");
-            return new NewObjectNode(className);
-        }
-
         if (match(Symbol.TokenType.LPAREN)) {
             ExpressionNode expr = parseExpression();
-            expect(Symbol.TokenType.RPAREN, "Expected ')'");
+            expect(Symbol.TokenType.RPAREN, "Expected ')' after expression");
             return expr;
         }
 
@@ -498,89 +482,65 @@ public class Parser {
             return buildLiteralNode(literal);
         }
 
+        if (isTypeToken(current) && checkNext(Symbol.TokenType.KW_ARRAY)) {
+            String elementType = parseType();
+            expectKeyword(Symbol.TokenType.KW_ARRAY, "ARRAY", "Expected 'ARRAY' after type");
+            expect(Symbol.TokenType.LBRACKET, "Expected '[' after ARRAY");
+            ExpressionNode size = parseExpression();
+            expect(Symbol.TokenType.RBRACKET, "Expected ']' after array size");
+            return new ArrayCreationNode(elementType, size);
+        }
+
         if (check(Symbol.TokenType.IDENTIFIER)) {
+            ExpressionNode expr;
             String name = lexemeOf(current);
             advance();
 
             if (match(Symbol.TokenType.LPAREN)) {
-                List<ExpressionNode> args = new ArrayList<>();
-                if (!check(Symbol.TokenType.RPAREN)) {
-                    do {
-                        args.add(parseExpression());
-                    } while (match(Symbol.TokenType.COMMA));
-                }
-                expect(Symbol.TokenType.RPAREN, "Expected ')'");
-                return new NewObjectNode(name, args);
+                List<ExpressionNode> arguments = parseArguments();
+                expect(Symbol.TokenType.RPAREN, "Expected ')' after arguments");
+                expr = new FunctionCallNode(name, arguments);
+            } else {
+                expr = new IdentifierNode(name);
             }
 
-            return new IdentifierNode(name);
+            while (true) {
+                if (match(Symbol.TokenType.LBRACKET)) {
+                    ExpressionNode index = parseExpression();
+                    expect(Symbol.TokenType.RBRACKET, "Expected ']' after array index");
+                    expr = new ArrayAccessNode(expr, index);
+                    continue;
+                }
+                if (match(Symbol.TokenType.DOT)) {
+                    String fieldName = lexemeOf(current);
+                    expect(Symbol.TokenType.IDENTIFIER, "Expected field name after '.'");
+                    expr = new FieldAccessNode(expr, fieldName);
+                    continue;
+                }
+                break;
+            }
+
+            return expr;
         }
 
         throw new ParseException("Expected primary expression, found: " + current);
     }
 
-    private CollectionNode parseCollection() {
-        expectKeyword(Symbol.TokenType.KW_COLL, "coll", "Expected 'coll'");
+    private List<ExpressionNode> parseArguments() {
+        List<ExpressionNode> arguments = new ArrayList<>();
 
-        String name = lexemeOf(current);
-        expect(Symbol.TokenType.IDENTIFIER, "Expected collection name after 'coll'");
-
-        expect(Symbol.TokenType.LBRACE, "Expected '{' after collection name");
-
-        List<VarDeclarationNode> fields = new ArrayList<>();
-        while (!check(Symbol.TokenType.RBRACE) && !isEOF()) {
-            fields.add(parseVarDeclaration());
-            expect(Symbol.TokenType.SEMICOLON, "Expected ';' after field declaration");
+        if (check(Symbol.TokenType.RPAREN)) {
+            return arguments;
         }
 
-        expect(Symbol.TokenType.RBRACE, "Expected '}' to close collection");
-
-        return new CollectionNode(name, fields);
-    }
-
-    private FunctionNode parseFunction() {
-        expectKeyword(Symbol.TokenType.KW_DEF, "def", "Expected 'def'");
-
-        String returnType = "void";
-        String funcName;
-
-        if (check(Symbol.TokenType.IDENTIFIER) && checkNext(Symbol.TokenType.LPAREN)) {
-            funcName = lexemeOf(current);
-            expect(Symbol.TokenType.IDENTIFIER, "Expected function name");
-        } else {
-            returnType = parseType();
-
-            funcName = lexemeOf(current);
-            expect(Symbol.TokenType.IDENTIFIER, "Expected function name after return type");
-        }
-
-        expect(Symbol.TokenType.LPAREN, "Expected '(' after function name");
-
-        List<VarDeclarationNode> parameters = new ArrayList<>();
-        while (!check(Symbol.TokenType.RPAREN) && !isEOF()) {
-            parameters.add(parseParameter());
-            if (!check(Symbol.TokenType.RPAREN)) {
-                expect(Symbol.TokenType.COMMA, "Expected ',' between parameters");
+        while (true) {
+            arguments.add(parseExpression());
+            if (!match(Symbol.TokenType.COMMA)) {
+                break;
             }
         }
 
-        expect(Symbol.TokenType.RPAREN, "Expected ')' after parameters");
-
-        List<StatementNode> body = parseBlockStatements();
-
-        return new FunctionNode(funcName, returnType, parameters, body);
-    }
-
-    private ExpressionNode parseArrayLiteral(String type) {
-        expectKeyword(Symbol.TokenType.KW_ARRAY, "ARRAY", "Expected 'ARRAY'");
-
-        expect(Symbol.TokenType.LBRACKET, "Expected '['");
-
-        ExpressionNode size = parseExpression();
-
-        expect(Symbol.TokenType.RBRACKET, "Expected ']'");
-
-        return new ArrayLiteralNode(type, size);
+        return arguments;
     }
 
     private ExpressionNode buildLiteralNode(Symbol literal) {
@@ -592,19 +552,11 @@ public class Parser {
         }
 
         if (type == Symbol.TokenType.INT) {
-            try {
-                return new IntegerNode(Integer.parseInt(lex));
-            } catch (NumberFormatException e) {
-                throw new ParseException("Invalid integer literal: " + lex);
-            }
+            return new IntegerNode(Integer.parseInt(lex));
         }
 
         if (type == Symbol.TokenType.FLOAT) {
-            try {
-                return new FloatNode(Float.parseFloat(lex));
-            } catch (NumberFormatException e) {
-                throw new ParseException("Invalid float literal: " + lex);
-            }
+            return new FloatNode(Float.parseFloat(lex));
         }
 
         if (type == Symbol.TokenType.STRING) {
@@ -624,22 +576,5 @@ public class Parser {
             return s.substring(1, s.length() - 1);
         }
         return s;
-    }
-
-    private boolean startsCollection() {
-        return isKeyword(current, Symbol.TokenType.KW_COLL, "coll");
-    }
-
-    private boolean startsFunction() {
-        return isKeyword(current, Symbol.TokenType.KW_DEF, "def");
-    }
-
-    private VarDeclarationNode parseParameter() {
-        String type = parseType();
-
-        String identifier = lexemeOf(current);
-        expect(Symbol.TokenType.IDENTIFIER, "Expected parameter name");
-
-        return new VarDeclarationNode(false, type, identifier, null);
     }
 }

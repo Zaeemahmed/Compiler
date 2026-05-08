@@ -1,8 +1,6 @@
 package compiler.Parser;
 
-import java.util.ArrayList;
 import java.util.List;
-
 
 abstract class ExpressionNode {
     public abstract void print();
@@ -22,8 +20,8 @@ class OperationNode extends ExpressionNode {
     @Override
     public void print() {
         System.out.println("Operation: " + operator);
-        left.print();
-        right.print();
+        if (left != null) left.print();
+        if (right != null) right.print();
     }
 }
 
@@ -92,41 +90,36 @@ class StringNode extends ExpressionNode {
     }
 }
 
-class NewObjectNode extends ExpressionNode {
-    String className;
+class FunctionCallNode extends ExpressionNode {
+    String name;
     List<ExpressionNode> arguments;
 
-    public NewObjectNode(String className) {
-        this.className = className;
-        this.arguments = new ArrayList<>();
-    }
-
-    public NewObjectNode(String className, List<ExpressionNode> arguments) {
-        this.className = className;
-        this.arguments = arguments != null ? arguments : new ArrayList<>();
+    public FunctionCallNode(String name, List<ExpressionNode> arguments) {
+        this.name = name;
+        this.arguments = arguments;
     }
 
     @Override
     public void print() {
-        System.out.println("New Object: " + className + "(" + arguments.size() + " args)");
+        System.out.println("FunctionCall: " + name);
         for (ExpressionNode arg : arguments) {
             arg.print();
         }
     }
 }
 
-class ArrayLiteralNode extends ExpressionNode {
+class ArrayCreationNode extends ExpressionNode {
+    String elementType;
     ExpressionNode size;
-    String type;
 
-    public ArrayLiteralNode(String type, ExpressionNode size) {
-        this.type = type;
+    public ArrayCreationNode(String elementType, ExpressionNode size) {
+        this.elementType = elementType;
         this.size = size;
     }
 
     @Override
     public void print() {
-        System.out.println("Array of type: " + type + ", size: ");
+        System.out.println("ArrayCreation: " + elementType + "[]");
         size.print();
     }
 }
@@ -142,9 +135,8 @@ class ArrayAccessNode extends ExpressionNode {
 
     @Override
     public void print() {
-        System.out.println("Array Access:");
+        System.out.println("ArrayAccess");
         array.print();
-        System.out.println("Index:");
         index.print();
     }
 }
@@ -160,7 +152,7 @@ class FieldAccessNode extends ExpressionNode {
 
     @Override
     public void print() {
-        System.out.println("Field Access: " + field);
+        System.out.println("FieldAccess: " + field);
         object.print();
     }
 }
