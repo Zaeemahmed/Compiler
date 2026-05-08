@@ -57,14 +57,15 @@ public class Parser {
     }
 
     private boolean isKeyword(Symbol s, Symbol.TokenType tokenType, String lexeme) {
-    if (s == null) return false;
+        if (s == null) return false;
 
-    if (tokenType == Symbol.TokenType.IDENTIFIER) {
-        return hasLexeme(s, lexeme);
+        if (tokenType == Symbol.TokenType.IDENTIFIER) {
+            return hasLexeme(s, lexeme);
+        }
+
+        return s.getType() == tokenType || hasLexeme(s, lexeme);
     }
-
-    return s.getType() == tokenType || hasLexeme(s, lexeme);
-}
+    
     private boolean matchKeyword(Symbol.TokenType tokenType, String lexeme) {
         if (isKeyword(current, tokenType, lexeme)) {
             advance();
