@@ -11,6 +11,7 @@ public class SemanticAnalyzer {
     private final Set<String> knownTypes = new HashSet<>();
     private final Map<String, FunctionSignature> functions = new HashMap<>();
     private final Map<String, List<String>> collectionConstructorTypes = new HashMap<>();
+    private final Map<String, Map<String, String>> collectionFieldTypes = new HashMap<>();
 
     private Scope currentScope;
     private String currentFunctionReturnType;
@@ -22,6 +23,12 @@ public class SemanticAnalyzer {
         knownTypes.add("BOOLEAN");
         knownTypes.add("BOOL");
         knownTypes.add("void");
+
+        functions.put("read_INT", new FunctionSignature("read_INT", "INT", List.of()));
+        functions.put("read_FLOAT", new FunctionSignature("read_FLOAT", "FLOAT", List.of()));
+        functions.put("read_STRING", new FunctionSignature("read_STRING", "STRING", List.of()));
+        functions.put("read_BOOL", new FunctionSignature("read_BOOL", "BOOLEAN", List.of()));
+        functions.put("println", new FunctionSignature("println", "void", List.of("ANY")));
     }
 
     public void analyze(AST ast) {
@@ -64,6 +71,7 @@ public class SemanticAnalyzer {
         knownTypes.add(name);
 
         List<String> fieldTypes = new ArrayList<>();
+        Map<String, String> fieldTypeMap = new HashMap<>();
         Set<String> fieldNames = new HashSet<>();
 
         for (VarDeclarationNode field : collectionNode.getFields()) {
@@ -78,9 +86,11 @@ public class SemanticAnalyzer {
             }
 
             fieldTypes.add(fieldType);
+            fieldTypeMap.put(field.getIdentifier(), fieldType);
         }
 
         collectionConstructorTypes.put(name, fieldTypes);
+        collectionFieldTypes.put(name, fieldTypeMap);
     }
 
     private void registerFunction(FunctionNode functionNode) {
@@ -319,6 +329,18 @@ public class SemanticAnalyzer {
             return inferOperationType(operationNode);
         }
 
+        if (expr instanceof ArrayCreationNode arrayCreationNode) {
+            return inferArrayCreationType(arrayCreationNode);
+        }
+
+        if (expr instanceof ArrayAccessNode arrayAccessNode) {
+            return inferArrayAccessType(arrayAccessNode);
+        }
+
+        if (expr instanceof FieldAccessNode fieldAccessNode) {
+            return inferFieldAccessType(fieldAccessNode);
+        }
+
         throw new SemanticException("TypeError: unsupported expression in semantic analysis");
     }
 
@@ -331,8 +353,14 @@ public class SemanticAnalyzer {
             }
 
             for (int i = 0; i < functionCallNode.arguments.size(); i++) {
-                String expected = normalizeType(signature.getParameterTypes().get(i));
+                String expected = signature.getParameterTypes().get(i);
                 String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(i)));
+
+                if ("ANY".equals(expected)) {
+                    continue;
+                }
+
+                expected = normalizeType(expected);
                 if (!sameType(expected, actual)) {
                     throw new SemanticException("ArgumentError: expected " + expected + " but got " + actual + " in call to " + functionCallNode.name);
                 }
@@ -400,6 +428,53 @@ public class SemanticAnalyzer {
         throw new SemanticException("OperatorError: unsupported operator '" + op + "'");
     }
 
+    private String inferArrayCreationType(ArrayCreationNode arrayCreationNode) {
+        String elementType = normalizeType(arrayCreationNode.elementType);
+        if (!typeExists(elementType)) {
+            throw new SemanticException("TypeError: unknown array element type '" + elementType + "'");
+        }
+
+        String sizeType = normalizeType(inferExpressionType(arrayCreationNode.size));
+        if (!sameType("INT", sizeType)) {
+            throw new SemanticException("TypeError: array size must be INT, got " + sizeType);
+        }
+
+        return elementType + "[]";
+    }
+
+    private String inferArrayAccessType(ArrayAccessNode arrayAccessNode) {
+        String arrayType = normalizeType(inferExpressionType(arrayAccessNode.array));
+        if (arrayType == null || !arrayType.endsWith("[]")) {
+            throw new SemanticException("TypeError: cannot index non-array type " + arrayType);
+        }
+
+        String indexType = normalizeType(inferExpressionType(arrayAccessNode.index));
+        if (!sameType("INT", indexType)) {
+            throw new SemanticException("TypeError: array index must be INT, got " + indexType);
+        }
+
+        return arrayType.substring(0, arrayType.length() - 2);
+    }
+
+    private String inferFieldAccessType(FieldAccessNode fieldAccessNode) {
+        String objectType = normalizeType(inferExpressionType(fieldAccessNode.object));
+        if (objectType == null || objectType.endsWith("[]")) {
+            throw new SemanticException("TypeError: field access on non-collection type " + objectType);
+        }
+
+        Map<String, String> fields = collectionFieldTypes.get(objectType);
+        if (fields == null) {
+            throw new SemanticException("TypeError: field access on non-collection type " + objectType);
+        }
+
+        String fieldType = fields.get(fieldAccessNode.field);
+        if (fieldType == null) {
+            throw new SemanticException("TypeError: unknown field '" + fieldAccessNode.field + "' for type " + objectType);
+        }
+
+        return fieldType;
+    }
+
     private boolean isArithmeticOperator(String op) {
         return "+".equals(op) || "-".equals(op) || "*".equals(op) || "/".equals(op) || "%".equals(op);
     }
@@ -430,12 +505,24 @@ public class SemanticAnalyzer {
     }
 
     private boolean typeExists(String type) {
-        return knownTypes.contains(normalizeType(type));
+        String normalized = normalizeType(type);
+        if (normalized == null) {
+            return false;
+        }
+        if (normalized.endsWith("[]")) {
+            String elementType = normalized.substring(0, normalized.length() - 2);
+            return typeExists(elementType);
+        }
+        return knownTypes.contains(normalized);
     }
 
     private String normalizeType(String type) {
         if (type == null) {
             return null;
+        }
+        if (type.endsWith("[]")) {
+            String elementType = normalizeType(type.substring(0, type.length() - 2));
+            return elementType == null ? null : elementType + "[]";
         }
         if ("BOOL".equals(type)) {
             return "BOOLEAN";

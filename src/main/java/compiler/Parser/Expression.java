@@ -1,4 +1,4 @@
-package compiler.expression;
+package compiler.Parser;
 
 import java.util.List;
 
@@ -105,5 +105,54 @@ class FunctionCallNode extends ExpressionNode {
         for (ExpressionNode arg : arguments) {
             arg.print();
         }
+    }
+}
+
+class ArrayCreationNode extends ExpressionNode {
+    String elementType;
+    ExpressionNode size;
+
+    public ArrayCreationNode(String elementType, ExpressionNode size) {
+        this.elementType = elementType;
+        this.size = size;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("ArrayCreation: " + elementType + "[]");
+        size.print();
+    }
+}
+
+class ArrayAccessNode extends ExpressionNode {
+    ExpressionNode array;
+    ExpressionNode index;
+
+    public ArrayAccessNode(ExpressionNode array, ExpressionNode index) {
+        this.array = array;
+        this.index = index;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("ArrayAccess");
+        array.print();
+        index.print();
+    }
+}
+
+class FieldAccessNode extends ExpressionNode {
+    ExpressionNode object;
+    String field;
+
+    public FieldAccessNode(ExpressionNode object, String field) {
+        this.object = object;
+        this.field = field;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("FieldAccess: " + field);
+        object.print();
     }
 }

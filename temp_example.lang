@@ -1,0 +1,4 @@
+# Good luck
+final INT i = 3;
+final FLOAT j = 3.25e0;
+INT[] c = INT ARRAY [5];

@@ -56,8 +56,25 @@ public class Compiler {
             return;
         }
 
+        if (args.length == 1) {
+            try (Reader reader = new FileReader(args[0])) {
+                Lexer lexer = new Lexer(reader);
+                Parser parser = new Parser(lexer);
+                AST ast = parser.getAST();
+                SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer();
+                semanticAnalyzer.analyze(ast);
+                System.out.println("Compilation successful");
+            } catch (Exception e) {
+                System.err.println(e.getMessage());
+                System.exit(2);
+            }
+            return;
+        }
+
         System.out.println("Usage: ./gradlew run --args='-lexer path/to/file'");
         System.out.println("   or: ./gradlew run --args='-parser path/to/file'");
         System.out.println("   or: ./gradlew run --args='-semantic path/to/file'");
+        System.out.println("   or: ./gradlew run --args='path/to/file' (default: full compilation)");
     }
 }
+
