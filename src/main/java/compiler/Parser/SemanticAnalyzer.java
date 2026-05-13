@@ -11,6 +11,7 @@ public class SemanticAnalyzer {
     private final Set<String> knownTypes = new HashSet<>();
     private final Map<String, FunctionSignature> functions = new HashMap<>();
     private final Map<String, List<String>> collectionConstructorTypes = new HashMap<>();
+    private final Map<String, Map<String, String>> collectionFieldTypes = new HashMap<>();
 
     private Scope currentScope;
     private String currentFunctionReturnType;
@@ -64,6 +65,7 @@ public class SemanticAnalyzer {
         knownTypes.add(name);
 
         List<String> fieldTypes = new ArrayList<>();
+        Map<String, String> fieldTypeMap = new HashMap<>();
         Set<String> fieldNames = new HashSet<>();
 
         for (VarDeclarationNode field : collectionNode.getFields()) {
@@ -78,9 +80,11 @@ public class SemanticAnalyzer {
             }
 
             fieldTypes.add(fieldType);
+            fieldTypeMap.put(field.getIdentifier(), fieldType);
         }
 
         collectionConstructorTypes.put(name, fieldTypes);
+        collectionFieldTypes.put(name, fieldTypeMap);
     }
 
     private void registerFunction(FunctionNode functionNode) {
@@ -319,10 +323,94 @@ public class SemanticAnalyzer {
             return inferOperationType(operationNode);
         }
 
-        throw new SemanticException("TypeError: unsupported expression in semantic analysis");
+        if (expr instanceof ArrayCreationNode arrayCreationNode) {
+            String sizeType = normalizeType(inferExpressionType(arrayCreationNode.size));
+            if (!sameType("INT", sizeType)) {
+                throw new SemanticException("TypeError: array size must be INT, got " + sizeType);
+            }
+            String elementType = normalizeType(arrayCreationNode.elementType);
+            if (!typeExists(elementType)) {
+                throw new SemanticException("TypeError: unknown array element type " + elementType);
+            }
+            return elementType + "[]";
+        }
+
+        if (expr instanceof FieldAccessNode fieldAccessNode) {
+            return inferFieldAccessType(fieldAccessNode);
+        }
+
+        throw new SemanticException("TypeError: unsupported expression in semantic analysis: " + expr.getClass().getName());
+    }
+
+    private String inferFieldAccessType(FieldAccessNode fieldAccessNode) {
+        String objectType = normalizeType(inferExpressionType(fieldAccessNode.object));
+
+        Map<String, String> fields = collectionFieldTypes.get(objectType);
+        if (fields == null) {
+            throw new SemanticException("TypeError: field access on non-collection type " + objectType);
+        }
+
+        String fieldType = fields.get(fieldAccessNode.field);
+        if (fieldType == null) {
+            throw new SemanticException("TypeError: unknown field '" + fieldAccessNode.field + "' for type " + objectType);
+        }
+
+        return normalizeType(fieldType);
     }
 
     private String inferFunctionCallType(FunctionCallNode functionCallNode) {
+        
+        if ("length".equals(functionCallNode.name)) {
+            if (functionCallNode.arguments.size() != 1) {
+                throw new SemanticException("ArgumentError: length expects 1 argument");
+            }
+            String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(0)));
+            if (!actual.endsWith("[]")) {
+                throw new SemanticException("ArgumentError: length expects an array but got " + actual);
+            }
+            return "INT";
+        }
+
+        if ("print_INT".equals(functionCallNode.name)) {
+            if (functionCallNode.arguments.size() != 1) {
+                throw new SemanticException("ArgumentError: print_INT expects 1 argument");
+            }
+            String actual = inferExpressionType(functionCallNode.arguments.get(0));
+            if (!"INT".equals(actual) && !"int".equals(actual)) {
+                throw new SemanticException("ArgumentError: print_INT expects INT but got " + actual);
+            }
+            return "void";
+        }
+
+        if ("print_FLOAT".equals(functionCallNode.name)) {
+            if (functionCallNode.arguments.size() != 1) {
+                throw new SemanticException("ArgumentError: print_FLOAT expects 1 argument");
+            }
+            String actual = inferExpressionType(functionCallNode.arguments.get(0));
+            if (!"FLOAT".equals(actual) && !"float".equals(actual)) {
+                throw new SemanticException("ArgumentError: print_FLOAT expects FLOAT but got " + actual);
+            }
+            return "void";
+        }
+
+        if ("print".equals(functionCallNode.name)) {
+            if (functionCallNode.arguments.size() != 1) {
+                throw new SemanticException("ArgumentError: print expects 1 argument");
+            }
+            inferExpressionType(functionCallNode.arguments.get(0));
+            return "void";
+        }
+
+        if ("println".equals(functionCallNode.name)) {
+            if (functionCallNode.arguments.size() > 1) {
+                throw new SemanticException("ArgumentError: println expects 0 or 1 argument");
+            }
+            if (functionCallNode.arguments.size() == 1) {
+                inferExpressionType(functionCallNode.arguments.get(0));
+            }
+            return "void";
+        }
+
         if (functions.containsKey(functionCallNode.name)) {
             FunctionSignature signature = functions.get(functionCallNode.name);
 
@@ -430,33 +518,59 @@ public class SemanticAnalyzer {
     }
 
     private boolean typeExists(String type) {
-        return knownTypes.contains(normalizeType(type));
+        String normalized = normalizeType(type);
+
+        if (knownTypes.contains(normalized)) {
+            return true;
+        }
+
+        if (normalized.endsWith("[]")) {
+            String elementType = normalized.substring(0, normalized.length() - 2);
+            return typeExists(elementType);
+        }
+
+        return false;
     }
 
     private String normalizeType(String type) {
         if (type == null) {
-            return null;
+            return "void";
         }
+
         if ("BOOL".equals(type)) {
             return "BOOLEAN";
         }
+
+        if ("BOOL[]".equals(type)) {
+            return "BOOLEAN[]";
+        }
+
         return type;
     }
 
     private boolean isReservedName(String name) {
-        return "INT".equals(name)
-                || "FLOAT".equals(name)
-                || "STRING".equals(name)
-                || "BOOLEAN".equals(name)
-                || "BOOL".equals(name)
-                || "while".equals(name)
-                || "if".equals(name)
-                || "else".equals(name)
-                || "return".equals(name)
-                || "for".equals(name)
-                || "def".equals(name)
-                || "coll".equals(name)
-                || "ARRAY".equals(name)
-                || "not".equals(name);
+        if (name == null) {
+            return false;
+        }
+
+        return name.equals("def")
+                || name.equals("coll")
+                || name.equals("if")
+                || name.equals("else")
+                || name.equals("while")
+                || name.equals("for")
+                || name.equals("return")
+                || name.equals("true")
+                || name.equals("false")
+                || name.equals("not")
+                || name.equals("INT")
+                || name.equals("FLOAT")
+                || name.equals("STRING")
+                || name.equals("BOOLEAN")
+                || name.equals("BOOL")
+                || name.equals("ARRAY")
+                || name.equals("void");
     }
+
+
 }

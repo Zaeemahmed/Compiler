@@ -1,0 +1,21 @@
+def main() {
+    INT i = 0;
+    INT result = 0;
+
+    while (i < 5) {
+        i = i + 1;
+        result = result + i;
+    }
+
+    print("While Result: ");
+    print_INT(result);
+    println("");
+
+    for (i; 1 -> 5; i + 1) {
+        if (i > 3) {
+            print("High ");
+        } else {
+            print("Low ");
+        }
+    }
+}

@@ -1,0 +1,31 @@
+coll Testing {
+    INT x;
+}
+
+def scopeTest() {
+    INT value = 1;
+    print_INT(value);
+    println("");
+}
+
+def main() {
+    INT a = 10;
+    INT b = 5;
+    FLOAT c = 10.5;
+    FLOAT d = 5.2;
+    Testing test = Testing(3);
+
+    print("Addition: "); print_INT(a + b); println("");
+    print("Subtraction: "); print_INT(a - b); println("");
+    print("Unary Minus: "); print_INT(-a); println("");
+    print("Multiplication: "); print_INT(a * b); println("");
+    print("Division: "); print_INT(a / b); println("");
+    print("Modulus: "); print_INT(a % b); println("");
+
+    print("Float Addition: "); print_FLOAT(c + d); println("");
+    print("Field: "); print_INT(test.x); println("");
+
+    scopeTest();
+    INT value = 2;
+    print_INT(value);
+}
