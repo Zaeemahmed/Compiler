@@ -1,0 +1,10 @@
+def main() {
+    BOOLEAN ok = true;
+    INT[] arr = INT ARRAY[3];
+
+    if (ok && not false) {
+        println("boolean ok");
+    }
+
+    println(length(arr));
+}
