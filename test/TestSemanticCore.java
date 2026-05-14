@@ -152,7 +152,7 @@ public class TestSemanticCore {
     }
 
     @Test
-    public void throwsOperatorErrorForArithmeticOperatorMismatch() {
+    public void throwsTypeErrorForMixedNumericAssignmentToInt() {
         String input = """
                 def main() {
                   INT x = 1;
@@ -161,7 +161,22 @@ public class TestSemanticCore {
                 }
                 """;
 
-        assertSemanticErrorContains(input, "OperatorError");
+        assertSemanticErrorContains(input, "TypeError");
+    }
+
+    @Test
+    public void passesMixedNumericArithmeticWithFloatResult() {
+        String input = """
+                def main() {
+                  INT x = 1;
+                  FLOAT y = 2.5;
+                  FLOAT z = x + y;
+                }
+                """;
+
+        Parser parser = new Parser(new Lexer(new StringReader(input)));
+        AST ast = parser.getAST();
+        new SemanticAnalyzer().analyze(ast);
     }
 
     @Test

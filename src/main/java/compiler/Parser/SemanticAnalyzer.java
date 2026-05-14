@@ -341,27 +341,15 @@ public class SemanticAnalyzer {
             return elementType + "[]";
         }
 
+        if (expr instanceof ArrayAccessNode arrayAccessNode) {
+            return inferArrayAccessType(arrayAccessNode);
+        }
+
         if (expr instanceof FieldAccessNode fieldAccessNode) {
             return inferFieldAccessType(fieldAccessNode);
         }
 
         throw new SemanticException("TypeError: unsupported expression in semantic analysis: " + expr.getClass().getName());
-    }
-
-    private String inferFieldAccessType(FieldAccessNode fieldAccessNode) {
-        String objectType = normalizeType(inferExpressionType(fieldAccessNode.object));
-
-        Map<String, String> fields = collectionFieldTypes.get(objectType);
-        if (fields == null) {
-            throw new SemanticException("TypeError: field access on non-collection type " + objectType);
-        }
-
-        String fieldType = fields.get(fieldAccessNode.field);
-        if (fieldType == null) {
-            throw new SemanticException("TypeError: unknown field '" + fieldAccessNode.field + "' for type " + objectType);
-        }
-
-        return normalizeType(fieldType);
     }
 
     private String inferFunctionCallType(FunctionCallNode functionCallNode) {
@@ -478,9 +466,9 @@ public class SemanticAnalyzer {
 
         if (isArithmeticOperator(op)) {
             if (!sameNumericType(leftType, rightType)) {
-                throw new SemanticException("OperatorError: arithmetic operator '" + op + "' requires same numeric types, got " + leftType + " and " + rightType);
+                throw new SemanticException("OperatorError: arithmetic operator '" + op + "' requires numeric operands, got " + leftType + " and " + rightType);
             }
-            return leftType;
+            return numericResultType(leftType, rightType);
         }
 
         if (isLogicalOperator(op)) {
@@ -491,7 +479,7 @@ public class SemanticAnalyzer {
         }
 
         if (isComparisonOperator(op)) {
-            if (!sameType(leftType, rightType)) {
+            if (!sameComparableType(leftType, rightType)) {
                 throw new SemanticException("OperatorError: comparison operator '" + op + "' requires operands of same type");
             }
             return "BOOLEAN";
@@ -564,12 +552,29 @@ public class SemanticAnalyzer {
         return "BOOLEAN".equals(normalizeType(type));
     }
 
-    private boolean sameNumericType(String left, String right) {
-        String normalizedLeft = normalizeType(left);
-        String normalizedRight = normalizeType(right);
+    private boolean isNumericType(String type) {
+        String normalized = normalizeType(type);
+        return "INT".equals(normalized) || "FLOAT".equals(normalized);
+    }
 
-        return ("INT".equals(normalizedLeft) || "FLOAT".equals(normalizedLeft))
-                && normalizedLeft.equals(normalizedRight);
+    private String numericResultType(String left, String right) {
+        left = normalizeType(left);
+        right = normalizeType(right);
+        if ("FLOAT".equals(left) || "FLOAT".equals(right)) {
+            return "FLOAT";
+        }
+        return "INT";
+    }
+
+    private boolean sameNumericType(String left, String right) {
+        return isNumericType(left) && isNumericType(right);
+    }
+
+    private boolean sameComparableType(String left, String right) {
+        if (isNumericType(left) && isNumericType(right)) {
+            return true;
+        }
+        return sameType(left, right);
     }
 
     private boolean sameType(String left, String right) {
