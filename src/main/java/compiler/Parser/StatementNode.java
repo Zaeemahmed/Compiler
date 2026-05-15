@@ -1,5 +1,6 @@
 package compiler.Parser;
 
+import compiler.Lexer.Symbol;
 import java.util.List;
 
 public abstract class StatementNode {
@@ -34,18 +35,21 @@ class VarDeclarationNode extends StatementNode {
 class AssignmentNode extends StatementNode {
     private final String identifier;
     private final ExpressionNode value;
+    private final Symbol.TokenType operator;
 
-    public AssignmentNode(String identifier, ExpressionNode value) {
+    public AssignmentNode(String identifier, ExpressionNode value, Symbol.TokenType operator) {
         this.identifier = identifier;
         this.value = value;
+        this.operator = operator;
     }
 
     public String getIdentifier() { return identifier; }
     public ExpressionNode getValue() { return value; }
+    public Symbol.TokenType getOperator() { return operator; }
 
     @Override
     public void print() {
-        System.out.println("Assignment: " + identifier);
+        System.out.println("Assignment: " + identifier + " " + operator);
         value.print();
     }
 }

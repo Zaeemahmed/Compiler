@@ -1,0 +1,12 @@
+def INT add(INT a, INT b) {
+    return a + b;
+}
+
+def INT apply(FUNC f, INT x, INT y) {
+    return f(x, y);
+}
+
+def main() {
+    INT result = apply(add, 5, 3);
+    println(result);  // Outputs: 8
+}

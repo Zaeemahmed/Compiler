@@ -52,6 +52,13 @@ public class Lexer {
                 continue;
             }
 
+            if (currentChar == '/' && peek() == '/') {
+                while (currentChar != -1 && currentChar != '\n' && currentChar != '\r') {
+                    advance();
+                }
+                continue;
+            }
+
             break;
         }
     }
@@ -97,25 +104,44 @@ public class Lexer {
                 throw new LexerException("Invalid symbol '|'");
 
             case '+':
-                advance();
-                return new Symbol(Symbol.TokenType.PLUS, "+");
+                if (matchOperatorTail("=")) {
+                    return new Symbol(Symbol.TokenType.PLUS_ASSIGN, "+=");
+                } else {
+                    advance();
+                    return new Symbol(Symbol.TokenType.PLUS, "+");
+                }
             case '-':
                 if (peek() == '>') {
                     advance();
                     advance();
                     return new Symbol(Symbol.TokenType.RARROW, "->");
+                } else if (matchOperatorTail("=")) {
+                    return new Symbol(Symbol.TokenType.MINUS_ASSIGN, "-=");
+                } else {
+                    advance();
+                    return new Symbol(Symbol.TokenType.MINUS, "-");
                 }
-                advance();
-                return new Symbol(Symbol.TokenType.MINUS, "-");
             case '*':
-                advance();
-                return new Symbol(Symbol.TokenType.STAR, "*");
+                if (matchOperatorTail("=")) {
+                    return new Symbol(Symbol.TokenType.STAR_ASSIGN, "*=");
+                } else {
+                    advance();
+                    return new Symbol(Symbol.TokenType.STAR, "*");
+                }
             case '/':
-                advance();
-                return new Symbol(Symbol.TokenType.SLASH, "/");
+                if (matchOperatorTail("=")) {
+                    return new Symbol(Symbol.TokenType.SLASH_ASSIGN, "/=");
+                } else {
+                    advance();
+                    return new Symbol(Symbol.TokenType.SLASH, "/");
+                }
             case '%':
-                advance();
-                return new Symbol(Symbol.TokenType.MOD, "%");
+                if (matchOperatorTail("=")) {
+                    return new Symbol(Symbol.TokenType.MOD_ASSIGN, "%=");
+                } else {
+                    advance();
+                    return new Symbol(Symbol.TokenType.MOD, "%");
+                }
 
             case '(':
                 advance();
@@ -300,6 +326,8 @@ public class Lexer {
                 return new Symbol(Symbol.TokenType.KW_NEW, word);
             case "coll":
                 return new Symbol(Symbol.TokenType.KW_COLL, word);
+            case "func":
+                return new Symbol(Symbol.TokenType.KW_FUNC, word);
         }
 
         return new Symbol(Symbol.TokenType.IDENTIFIER, word);

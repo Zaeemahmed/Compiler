@@ -91,19 +91,97 @@ class StringNode extends ExpressionNode {
 }
 
 class FunctionCallNode extends ExpressionNode {
-    String name;
+    ExpressionNode function;
     List<ExpressionNode> arguments;
 
-    public FunctionCallNode(String name, List<ExpressionNode> arguments) {
-        this.name = name;
+    public FunctionCallNode(ExpressionNode function, List<ExpressionNode> arguments) {
+        this.function = function;
         this.arguments = arguments;
+    }
+
+    public String getName() {
+        if (function instanceof IdentifierNode) {
+            return ((IdentifierNode) function).name;
+        }
+        return null; // For function variables
+    }
+
+    public ExpressionNode getFunction() {
+        return function;
     }
 
     @Override
     public void print() {
-        System.out.println("FunctionCall: " + name);
+        String functionName = getName();
+        System.out.println("FunctionCall: " + (functionName != null ? functionName : "<function expression>"));
         for (ExpressionNode arg : arguments) {
             arg.print();
+        }
+    }
+}
+
+class LambdaNode extends ExpressionNode {
+    private final List<VarDeclarationNode> parameters;
+    private final ExpressionNode expressionBody;
+    private final List<StatementNode> blockBody;
+    private String functionName;
+    private String inferredType;
+
+    public LambdaNode(List<VarDeclarationNode> parameters, ExpressionNode expressionBody, List<StatementNode> blockBody) {
+        this.parameters = parameters;
+        this.expressionBody = expressionBody;
+        this.blockBody = blockBody;
+    }
+
+    public List<VarDeclarationNode> getParameters() {
+        return parameters;
+    }
+
+    public ExpressionNode getExpressionBody() {
+        return expressionBody;
+    }
+
+    public List<StatementNode> getBlockBody() {
+        return blockBody;
+    }
+
+    public boolean hasExpressionBody() {
+        return expressionBody != null;
+    }
+
+    public boolean hasBlockBody() {
+        return blockBody != null;
+    }
+
+    public String getFunctionName() {
+        return functionName;
+    }
+
+    public void setFunctionName(String functionName) {
+        this.functionName = functionName;
+    }
+
+    public String getInferredType() {
+        return inferredType;
+    }
+
+    public void setInferredType(String inferredType) {
+        this.inferredType = inferredType;
+    }
+
+    @Override
+    public void print() {
+        System.out.println("Lambda:");
+        for (VarDeclarationNode parameter : parameters) {
+            parameter.print();
+        }
+        if (expressionBody != null) {
+            expressionBody.print();
+        }
+        if (blockBody != null) {
+            for (StatementNode stmt : blockBody) {
+                stmt.print();
+            }
         }
     }
 }

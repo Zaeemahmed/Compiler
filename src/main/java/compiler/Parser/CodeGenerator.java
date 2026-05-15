@@ -1,5 +1,6 @@
 package compiler.Parser;
 
+import compiler.Lexer.Symbol;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -33,6 +34,7 @@ public class CodeGenerator {
     private final Map<String, FunctionInfo> functions = new LinkedHashMap<>();
     private final Map<String, String> globals = new LinkedHashMap<>();
     private final Map<String, VarDeclarationNode> globalDeclarations = new LinkedHashMap<>();
+    private final Map<String, String> globalFunctionTargets = new LinkedHashMap<>();
 
     private ClassWriter classWriter;
     private MethodVisitor mv;
@@ -150,14 +152,10 @@ public class CodeGenerator {
         writeGlobalInitializer();
 
         boolean hasMain = false;
-        for (Object object : statements) {
-            StatementNode stmt = (StatementNode) object;
-            if (stmt instanceof FunctionNode) {
-                FunctionNode function = (FunctionNode) stmt;
-                writeFunction(function);
-                if ("main".equals(function.getName())) {
-                    hasMain = true;
-                }
+        for (FunctionInfo function : functions.values()) {
+            writeFunction(function.node);
+            if ("main".equals(function.name)) {
+                hasMain = true;
             }
         }
 
@@ -194,6 +192,9 @@ public class CodeGenerator {
 
         for (VarDeclarationNode global : globalDeclarations.values()) {
             String type = normalizeType(global.getType());
+            if (type.equals("FUNC") && global.getValue() instanceof IdentifierNode identifierNode && functions.containsKey(identifierNode.name)) {
+                globalFunctionTargets.put(global.getIdentifier(), identifierNode.name);
+            }
             if (global.getValue() == null) {
                 emitDefaultValue(type);
             } else {
@@ -296,7 +297,11 @@ public class CodeGenerator {
 
     private void emitVarDeclaration(VarDeclarationNode declaration) {
         String type = normalizeType(declaration.getType());
-        int index = allocateLocal(declaration.getIdentifier(), type);
+        String functionTarget = null;
+        if ("FUNC".equals(type) && declaration.getValue() instanceof IdentifierNode identifierNode && functions.containsKey(identifierNode.name)) {
+            functionTarget = identifierNode.name;
+        }
+        int index = allocateLocal(declaration.getIdentifier(), type, functionTarget);
         if (declaration.getValue() == null) {
             emitDefaultValue(type);
         } else {
@@ -306,9 +311,23 @@ public class CodeGenerator {
     }
 
     private void emitAssignment(AssignmentNode assignment) {
+        Symbol.TokenType operator = assignment.getOperator();
         LocalVar local = resolveLocal(assignment.getIdentifier());
+
         if (local != null) {
-            emitExpressionAs(assignment.getValue(), local.type);
+            if (operator == Symbol.TokenType.ASSIGN) {
+                if ("FUNC".equals(normalizeType(local.type)) && assignment.getValue() instanceof IdentifierNode identifierNode && functions.containsKey(identifierNode.name)) {
+                    assignLocalFunctionTarget(assignment.getIdentifier(), identifierNode.name);
+                } else if ("FUNC".equals(normalizeType(local.type))) {
+                    assignLocalFunctionTarget(assignment.getIdentifier(), null);
+                }
+                emitExpressionAs(assignment.getValue(), local.type);
+            } else {
+                // Compound assignment: load current value, perform operation, store result
+                mv.visitVarInsn(loadOpcode(local.type), local.index);
+                emitExpressionAs(assignment.getValue(), local.type);
+                emitBinaryOperation(operator, local.type);
+            }
             mv.visitVarInsn(storeOpcode(local.type), local.index);
             return;
         }
@@ -317,8 +336,39 @@ public class CodeGenerator {
         if (globalType == null) {
             throw new IllegalStateException("Unknown assignment target: " + assignment.getIdentifier());
         }
-        emitExpressionAs(assignment.getValue(), globalType);
+
+        if (operator == Symbol.TokenType.ASSIGN) {
+            emitExpressionAs(assignment.getValue(), globalType);
+        } else {
+            // Compound assignment for globals
+            mv.visitFieldInsn(GETSTATIC, mainClassName, assignment.getIdentifier(), descriptor(globalType));
+            emitExpressionAs(assignment.getValue(), globalType);
+            emitBinaryOperation(operator, globalType);
+        }
         mv.visitFieldInsn(PUTSTATIC, mainClassName, assignment.getIdentifier(), descriptor(globalType));
+    }
+
+    private void emitBinaryOperation(Symbol.TokenType operator, String type) {
+        String op;
+        switch (operator) {
+            case PLUS_ASSIGN: op = "+"; break;
+            case MINUS_ASSIGN: op = "-"; break;
+            case STAR_ASSIGN: op = "*"; break;
+            case SLASH_ASSIGN: op = "/"; break;
+            case MOD_ASSIGN: op = "%"; break;
+            default: throw new IllegalStateException("Unsupported compound assignment operator: " + operator);
+        }
+        emitArithmeticInstruction(op, type);
+    }
+
+    private void assignLocalFunctionTarget(String name, String functionTarget) {
+        for (Map<String, LocalVar> scope : scopes) {
+            if (scope.containsKey(name)) {
+                LocalVar old = scope.get(name);
+                scope.put(name, new LocalVar(old.type, old.index, functionTarget));
+                return;
+            }
+        }
     }
 
     private void emitIf(IfNode node) {
@@ -389,9 +439,17 @@ public class CodeGenerator {
     }
 
     private void emitExpressionAs(ExpressionNode expression, String expectedType) {
+        if ("FUNC".equals(expectedType)
+                && expression instanceof IdentifierNode identifierNode
+                && functions.containsKey(identifierNode.name)) {
+            mv.visitLdcInsn(identifierNode.name);
+            return;
+        }
         String actualType = inferExpressionType(expression);
         emitExpression(expression);
-        if ("FLOAT".equals(expectedType) && "INT".equals(actualType)) {
+        if ("FLOAT".
+                equals(expectedType) && "INT".
+                equals(actualType)) {
             mv.visitInsn(I2F);
         }
     }
@@ -441,7 +499,39 @@ public class CodeGenerator {
             return;
         }
 
-        CollectionInfo collection = collections.get(call.name);
+        String callName = call.getName();
+        if (callName != null) {
+            LocalVar local = resolveLocal(callName);
+            if (local != null && "FUNC".equals(normalizeType(local.type))) {
+                if (local.functionTarget == null) {
+                    emitDynamicFunctionCall(call, callName, local.type, true, local.index);
+                    return;
+                }
+                FunctionInfo targetFunction = functions.get(local.functionTarget);
+                if (targetFunction == null) {
+                    throw new IllegalStateException("Unknown function target: " + local.functionTarget);
+                }
+                invokeFunctionByTarget(call, targetFunction);
+                return;
+            }
+
+            String globalType = globals.get(callName);
+            if ("FUNC".equals(normalizeType(globalType))) {
+                String target = globalFunctionTargets.get(callName);
+                if (target == null) {
+                    emitDynamicFunctionCall(call, callName, globalType, false, -1);
+                    return;
+                }
+                FunctionInfo targetFunction = functions.get(target);
+                if (targetFunction == null) {
+                    throw new IllegalStateException("Unknown function target: " + target);
+                }
+                invokeFunctionByTarget(call, targetFunction);
+                return;
+            }
+        }
+
+        CollectionInfo collection = collections.get(callName);
         if (collection != null) {
             mv.visitTypeInsn(NEW, collection.name);
             mv.visitInsn(DUP);
@@ -453,18 +543,124 @@ public class CodeGenerator {
             return;
         }
 
-        FunctionInfo function = functions.get(call.name);
+        FunctionInfo function = functions.get(callName);
         if (function == null) {
-            throw new IllegalStateException("Unknown function: " + call.name);
+            throw new IllegalStateException("Unknown function: " + callName);
         }
+        invokeFunctionByTarget(call, function);
+    }
+
+    private void invokeFunctionByTarget(FunctionCallNode call, FunctionInfo function) {
         for (int i = 0; i < call.arguments.size(); i++) {
             emitExpressionAs((ExpressionNode) call.arguments.get(i), function.parameterTypes.get(i));
         }
         mv.visitMethodInsn(INVOKESTATIC, mainClassName, function.name, functionDescriptor(function), false);
     }
 
+    private void emitDynamicFunctionCall(FunctionCallNode call, String variableName, String variableType, boolean isLocal, int variableIndex) {
+        List<String> argumentTypes = new ArrayList<>();
+        for (Object argObject : call.arguments) {
+            ExpressionNode argument = (ExpressionNode) argObject;
+            argumentTypes.add(normalizeType(inferExpressionType(argument)));
+        }
+
+        List<FunctionInfo> candidates = findDynamicFunctionCandidates(variableType, argumentTypes);
+        if (candidates.isEmpty()) {
+            throw new IllegalStateException("Cannot resolve dynamic FUNC call for variable: " + variableName);
+        }
+
+        String returnType = normalizeType(candidates.get(0).returnType);
+        for (FunctionInfo candidate : candidates) {
+            if (!sameType(returnType, normalizeType(candidate.returnType))) {
+                throw new IllegalStateException("Ambiguous return type for dynamic FUNC call: " + variableName);
+            }
+        }
+
+        int[] argLocalIndexes = new int[argumentTypes.size()];
+        for (int i = 0; i < argumentTypes.size(); i++) {
+            String type = argumentTypes.get(i);
+            int tempIndex = nextLocal;
+            argLocalIndexes[i] = allocateLocal("__func_arg" + tempIndex, type);
+            emitExpressionAs((ExpressionNode) call.arguments.get(i), type);
+            mv.visitVarInsn(storeOpcode(type), argLocalIndexes[i]);
+        }
+
+        Label endLabel = new Label();
+        for (int i = 0; i < candidates.size(); i++) {
+            FunctionInfo candidate = candidates.get(i);
+            Label nextLabel = new Label();
+            mv.visitLdcInsn(candidate.name);
+            if (isLocal) {
+                mv.visitVarInsn(loadOpcode("FUNC"), variableIndex);
+            } else {
+                mv.visitFieldInsn(GETSTATIC, mainClassName, variableName, descriptor(variableType));
+            }
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false);
+            mv.visitJumpInsn(IFEQ, nextLabel);
+            for (int j = 0; j < argLocalIndexes.length; j++) {
+                mv.visitVarInsn(loadOpcode(argumentTypes.get(j)), argLocalIndexes[j]);
+            }
+            mv.visitMethodInsn(INVOKESTATIC, mainClassName, candidate.name, functionDescriptor(candidate), false);
+            mv.visitJumpInsn(GOTO, endLabel);
+            mv.visitLabel(nextLabel);
+        }
+        mv.visitTypeInsn(NEW, "java/lang/IllegalStateException");
+        mv.visitInsn(DUP);
+        if (isLocal) {
+            mv.visitVarInsn(loadOpcode("FUNC"), variableIndex);
+        } else {
+            mv.visitFieldInsn(GETSTATIC, mainClassName, variableName, descriptor(variableType));
+        }
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/IllegalStateException", "<init>", "(Ljava/lang/String;)V", false);
+        mv.visitInsn(ATHROW);
+        mv.visitLabel(endLabel);
+    }
+
+    private List<FunctionInfo> findDynamicFunctionCandidates(String variableType, List<String> argumentTypes) {
+        List<FunctionInfo> candidates = new ArrayList<>();
+        for (FunctionInfo function : functions.values()) {
+            if (function.parameterTypes.size() != argumentTypes.size()) {
+                continue;
+            }
+
+            boolean match = true;
+            for (int i = 0; i < argumentTypes.size(); i++) {
+                String expected = normalizeType(function.parameterTypes.get(i));
+                if (!sameType(expected, argumentTypes.get(i))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                candidates.add(function);
+            }
+        }
+        return candidates;
+    }
+
+    private boolean sameType(String left, String right) {
+        left = normalizeType(left);
+        right = normalizeType(right);
+        if ("FUNC".equals(left) && isFunctionType(right)) {
+            return true;
+        }
+        if ("FUNC".equals(right) && isFunctionType(left)) {
+            return true;
+        }
+        return left.equals(right);
+    }
+
+    private boolean isFunctionType(String type) {
+        if (type == null) {
+            return false;
+        }
+        type = type.trim();
+        return type.startsWith("(") && type.contains(")->");
+    }
+
     private boolean emitBuiltinCall(FunctionCallNode call) {
-        switch (call.name) {
+        switch (call.getName()) {
             case "print_INT":
                 emitPrintLike("print", "INT", firstArgument(call));
                 return true;
@@ -533,7 +729,7 @@ public class CodeGenerator {
 
     private ExpressionNode firstArgument(FunctionCallNode call) {
         if (call.arguments.isEmpty()) {
-            throw new IllegalStateException(call.name + " expects an argument");
+            throw new IllegalStateException((call.getName() != null ? call.getName() : "function") + " expects an argument");
         }
         return (ExpressionNode) call.arguments.get(0);
     }
@@ -743,7 +939,12 @@ public class CodeGenerator {
     }
 
     private String inferFunctionCallType(FunctionCallNode call) {
-        switch (call.name) {
+        String callName = call.getName();
+        if (callName == null) {
+            throw new IllegalStateException("Unknown function or collection constructor: null");
+        }
+
+        switch (callName) {
             case "print_INT":
             case "print_FLOAT":
             case "print":
@@ -758,22 +959,73 @@ public class CodeGenerator {
             case "ceil":
             case "length": return "INT";
             default:
-                if (collections.containsKey(call.name)) return call.name;
-                FunctionInfo function = functions.get(call.name);
+                if (collections.containsKey(callName)) return callName;
+                FunctionInfo function = functions.get(callName);
                 if (function != null) return function.returnType;
-                throw new IllegalStateException("Unknown function or collection constructor: " + call.name);
+                LocalVar local = resolveLocal(callName);
+                if (local != null && "FUNC".equals(normalizeType(local.type))) {
+                    if (local.functionTarget != null) {
+                        FunctionInfo targetFunction = functions.get(local.functionTarget);
+                        if (targetFunction != null) {
+                            return targetFunction.returnType;
+                        }
+                    }
+                    return inferFUNCVariableCallReturnType(call);
+                }
+                String globalType = globals.get(callName);
+                if ("FUNC".equals(normalizeType(globalType))) {
+                    String target = globalFunctionTargets.get(callName);
+                    if (target != null) {
+                        FunctionInfo targetFunction = functions.get(target);
+                        if (targetFunction != null) {
+                            return targetFunction.returnType;
+                        }
+                    }
+                    return inferFUNCVariableCallReturnType(call);
+                }
+                throw new IllegalStateException("Unknown function or collection constructor: " + callName);
         }
     }
 
     private int allocateLocal(String name, String type) {
+        return allocateLocal(name, type, null);
+    }
+
+    private String inferFUNCVariableCallReturnType(FunctionCallNode call) {
+        List<String> argumentTypes = new ArrayList<>();
+        for (Object argObject : call.arguments) {
+            ExpressionNode argument = (ExpressionNode) argObject;
+            argumentTypes.add(normalizeType(inferExpressionType(argument)));
+        }
+
+        String returnType = null;
+        for (FunctionInfo function : findDynamicFunctionCandidates("FUNC", argumentTypes)) {
+            if (returnType == null) {
+                returnType = normalizeType(function.returnType);
+            } else if (!sameType(returnType, normalizeType(function.returnType))) {
+                throw new IllegalStateException("Ambiguous return type for dynamic FUNC call: " + call.getName());
+            }
+        }
+
+        if (returnType == null) {
+            throw new IllegalStateException("Cannot infer FUNC call return type for variable: " + call.getName());
+        }
+        return returnType;
+    }
+
+    private int allocateLocal(String name, String type, String functionTarget) {
         int index = nextLocal;
-        defineLocal(name, type, index);
+        defineLocal(name, type, index, functionTarget);
         nextLocal += localSlots(type);
         return index;
     }
 
     private void defineLocal(String name, String type, int index) {
-        scopes.peek().put(name, new LocalVar(type, index));
+        defineLocal(name, type, index, null);
+    }
+
+    private void defineLocal(String name, String type, int index, String functionTarget) {
+        scopes.peek().put(name, new LocalVar(type, index, functionTarget));
     }
 
     private LocalVar resolveLocal(String name) {
@@ -824,7 +1076,9 @@ public class CodeGenerator {
             case "INT": return "I";
             case "FLOAT": return "F";
             case "BOOLEAN": return "Z";
-            case "STRING": return "Ljava/lang/String;";
+            case "STRING":
+            case "FUNC":
+                return "Ljava/lang/String;";
             case "void": return "V";
             default: return "L" + internalName(type) + ";";
         }
@@ -1019,9 +1273,11 @@ public class CodeGenerator {
     private static final class LocalVar {
         final String type;
         final int index;
-        LocalVar(String type, int index) {
+        final String functionTarget;
+        LocalVar(String type, int index, String functionTarget) {
             this.type = type;
             this.index = index;
+            this.functionTarget = functionTarget;
         }
     }
 

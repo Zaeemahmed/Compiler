@@ -14,7 +14,9 @@ public class SemanticAnalyzer {
     private final Map<String, Map<String, String>> collectionFieldTypes = new HashMap<>();
 
     private Scope currentScope;
+    private Scope globalScope;
     private String currentFunctionReturnType;
+    private int lambdaCounter;
 
     public SemanticAnalyzer() {
         knownTypes.add("INT");
@@ -23,6 +25,7 @@ public class SemanticAnalyzer {
         knownTypes.add("BOOLEAN");
         knownTypes.add("BOOL");
         knownTypes.add("void");
+        knownTypes.add("FUNC");
 
         functions.put("read_INT", new FunctionSignature("read_INT", "INT", List.of()));
         functions.put("read_FLOAT", new FunctionSignature("read_FLOAT", "FLOAT", List.of()));
@@ -37,6 +40,8 @@ public class SemanticAnalyzer {
         }
 
         currentScope = new Scope(null);
+        globalScope = currentScope;
+        lambdaCounter = 0;
         firstPass(ast.getProgram().getStatements());
         secondPass(ast.getProgram().getStatements());
     }
@@ -199,14 +204,28 @@ public class SemanticAnalyzer {
             throw new SemanticException("ScopeError: variable already defined in this scope: " + node.getIdentifier());
         }
 
+        String functionTarget = null;
         if (node.getValue() != null) {
             String valueType = inferExpressionType(node.getValue());
             if (!sameType(declaredType, valueType)) {
                 throw new SemanticException("TypeError: cannot assign " + valueType + " to " + declaredType + " variable " + node.getIdentifier());
             }
+
+            if (node.getValue() instanceof IdentifierNode identifierNode) {
+                functionTarget = resolveFunctionTarget(identifierNode, declaredType);
+            } else if (node.getValue() instanceof LambdaNode lambdaNode) {
+                if (isFunctionType(declaredType) && !sameType(declaredType, inferExpressionType(lambdaNode))) {
+                    throw new SemanticException("TypeError: lambda type does not match declared type " + declaredType);
+                }
+                functionTarget = lambdaNode.getFunctionName();
+            }
         }
 
-        currentScope.define(node.getIdentifier(), declaredType);
+        if (functionTarget != null) {
+            currentScope.define(node.getIdentifier(), declaredType, functionTarget);
+        } else {
+            currentScope.define(node.getIdentifier(), declaredType);
+        }
     }
 
     private void analyzeAssignment(AssignmentNode node) {
@@ -217,9 +236,50 @@ public class SemanticAnalyzer {
         }
 
         String valueType = inferExpressionType(node.getValue());
+        String functionTarget = null;
+
+        if (node.getValue() instanceof IdentifierNode identifierNode) {
+            functionTarget = resolveFunctionTarget(identifierNode, targetType);
+            if (functionTarget != null) {
+                currentScope.assign(node.getIdentifier(), targetType, functionTarget);
+                return;
+            }
+        } else if (node.getValue() instanceof LambdaNode lambdaNode) {
+            if (!sameType(targetType, inferExpressionType(lambdaNode))) {
+                throw new SemanticException("TypeError: lambda type does not match target type " + targetType);
+            }
+            currentScope.assign(node.getIdentifier(), targetType, lambdaNode.getFunctionName());
+            return;
+        }
+
         if (!sameType(targetType, valueType)) {
             throw new SemanticException("TypeError: cannot assign " + valueType + " to " + targetType + " variable " + node.getIdentifier());
         }
+
+        if ("FUNC".equals(targetType)) {
+            currentScope.assign(node.getIdentifier(), targetType, null);
+        }
+    }
+
+    private String resolveFunctionTarget(IdentifierNode identifierNode, String expectedType) {
+        if (functions.containsKey(identifierNode.name)) {
+            FunctionSignature signature = functions.get(identifierNode.name);
+            String functionType = "(" + String.join(",", signature.getParameterTypes()) + ")->" + signature.getReturnType();
+            if ("FUNC".equals(expectedType) || sameType(expectedType, functionType)) {
+                return identifierNode.name;
+            }
+        }
+
+        Scope.VariableInfo sourceInfo = currentScope.resolveVariable(identifierNode.name);
+        if (sourceInfo != null && ("FUNC".equals(sourceInfo.type) || isFunctionType(sourceInfo.type))) {
+            if (sourceInfo.functionTarget != null) {
+                if ("FUNC".equals(expectedType) || sameType(expectedType, sourceInfo.type)) {
+                    return sourceInfo.functionTarget;
+                }
+            }
+        }
+
+        return null;
     }
 
     private void analyzeIf(IfNode node) {
@@ -315,10 +375,18 @@ public class SemanticAnalyzer {
 
         if (expr instanceof IdentifierNode identifierNode) {
             String type = currentScope.resolve(identifierNode.name);
-            if (type == null) {
-                throw new SemanticException("ScopeError: variable used out of scope or before definition: " + identifierNode.name);
+            if (type != null) {
+                return type;
             }
-            return type;
+            if (functions.containsKey(identifierNode.name)) {
+                FunctionSignature signature = functions.get(identifierNode.name);
+                return "(" + String.join(",", signature.getParameterTypes()) + ")->" + signature.getReturnType();
+            }
+            throw new SemanticException("ScopeError: variable used out of scope or before definition: " + identifierNode.name);
+        }
+
+        if (expr instanceof LambdaNode lambdaNode) {
+            return inferLambdaType(lambdaNode);
         }
 
         if (expr instanceof FunctionCallNode functionCallNode) {
@@ -352,102 +420,230 @@ public class SemanticAnalyzer {
         throw new SemanticException("TypeError: unsupported expression in semantic analysis: " + expr.getClass().getName());
     }
 
+    private String inferLambdaType(LambdaNode lambdaNode) {
+        if (lambdaNode.getInferredType() != null) {
+            return lambdaNode.getInferredType();
+        }
+
+        List<String> parameterTypes = new ArrayList<>();
+        for (VarDeclarationNode parameter : lambdaNode.getParameters()) {
+            String type = normalizeType(parameter.getType());
+            if (!typeExists(type)) {
+                throw new SemanticException("TypeError: unknown lambda parameter type '" + type + "'");
+            }
+            parameterTypes.add(type);
+        }
+
+        Scope savedScope = currentScope;
+        String savedReturnType = currentFunctionReturnType;
+        currentScope = new Scope(globalScope);
+        for (VarDeclarationNode parameter : lambdaNode.getParameters()) {
+            currentScope.define(parameter.getIdentifier(), normalizeType(parameter.getType()));
+        }
+
+        String returnType;
+        if (lambdaNode.hasExpressionBody()) {
+            returnType = inferExpressionType(lambdaNode.getExpressionBody());
+        } else {
+            List<String> returnTypes = new ArrayList<>();
+            collectReturnTypes(lambdaNode.getBlockBody(), returnTypes);
+            if (returnTypes.isEmpty()) {
+                returnType = "void";
+            } else {
+                returnType = normalizeType(returnTypes.get(0));
+                for (String type : returnTypes) {
+                    if (!sameType(returnType, type)) {
+                        throw new SemanticException("TypeError: inconsistent return types in lambda");
+                    }
+                }
+            }
+
+            currentFunctionReturnType = returnType;
+            for (StatementNode statement : lambdaNode.getBlockBody()) {
+                analyzeStatement(statement);
+            }
+        }
+
+        currentScope = savedScope;
+        currentFunctionReturnType = savedReturnType;
+
+        String normalizedReturnType = normalizeType(returnType);
+        String functionType = "(" + String.join(",", parameterTypes) + ")->" + normalizedReturnType;
+        lambdaNode.setInferredType(functionType);
+        if (lambdaNode.getFunctionName() == null) {
+            lambdaNode.setFunctionName("__lambda" + lambdaCounter++);
+        }
+
+        functions.put(lambdaNode.getFunctionName(), new FunctionSignature(lambdaNode.getFunctionName(), normalizedReturnType, parameterTypes));
+        return functionType;
+    }
+
+    private void collectReturnTypes(List<StatementNode> statements, List<String> returnTypes) {
+        for (StatementNode statement : statements) {
+            if (statement instanceof ReturnNode returnNode) {
+                if (returnNode.getValue() == null) {
+                    returnTypes.add("void");
+                } else {
+                    returnTypes.add(inferExpressionType(returnNode.getValue()));
+                }
+            } else if (statement instanceof IfNode ifNode) {
+                collectReturnTypes(ifNode.getThenBranch(), returnTypes);
+                if (ifNode.getElseBranch() != null) {
+                    collectReturnTypes(ifNode.getElseBranch(), returnTypes);
+                }
+            } else if (statement instanceof WhileNode whileNode) {
+                collectReturnTypes(whileNode.getBody(), returnTypes);
+            } else if (statement instanceof ForNode forNode) {
+                collectReturnTypes(forNode.getBody(), returnTypes);
+            }
+        }
+    }
+
     private String inferFunctionCallType(FunctionCallNode functionCallNode) {
-        
-        if ("length".equals(functionCallNode.name)) {
-            if (functionCallNode.arguments.size() != 1) {
-                throw new SemanticException("ArgumentError: length expects 1 argument");
-            }
-            String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(0)));
-            if (!actual.endsWith("[]")) {
-                throw new SemanticException("ArgumentError: length expects an array but got " + actual);
-            }
-            return "INT";
-        }
+        String functionName = functionCallNode.getName();
 
-        if ("print_INT".equals(functionCallNode.name)) {
-            if (functionCallNode.arguments.size() != 1) {
-                throw new SemanticException("ArgumentError: print_INT expects 1 argument");
+        if (functionName != null) {
+            switch (functionName) {
+                case "length":
+                    if (functionCallNode.arguments.size() != 1) {
+                        throw new SemanticException("ArgumentError: length expects 1 argument");
+                    }
+                    String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(0)));
+                    if (!actual.endsWith("[]") && !"STRING".equals(actual)) {
+                        throw new SemanticException("ArgumentError: length expects an array or string but got " + actual);
+                    }
+                    return "INT";
+                case "print_INT":
+                    if (functionCallNode.arguments.size() != 1) {
+                        throw new SemanticException("ArgumentError: print_INT expects 1 argument");
+                    }
+                    actual = inferExpressionType(functionCallNode.arguments.get(0));
+                    if (!sameType("INT", actual)) {
+                        throw new SemanticException("ArgumentError: print_INT expects INT but got " + actual);
+                    }
+                    return "void";
+                case "print_FLOAT":
+                    if (functionCallNode.arguments.size() != 1) {
+                        throw new SemanticException("ArgumentError: print_FLOAT expects 1 argument");
+                    }
+                    actual = inferExpressionType(functionCallNode.arguments.get(0));
+                    if (!sameType("FLOAT", actual)) {
+                        throw new SemanticException("ArgumentError: print_FLOAT expects FLOAT but got " + actual);
+                    }
+                    return "void";
+                case "print":
+                    if (functionCallNode.arguments.size() != 1) {
+                        throw new SemanticException("ArgumentError: print expects 1 argument");
+                    }
+                    inferExpressionType(functionCallNode.arguments.get(0));
+                    return "void";
+                case "println":
+                    if (functionCallNode.arguments.size() > 1) {
+                        throw new SemanticException("ArgumentError: println expects 0 or 1 argument");
+                    }
+                    if (functionCallNode.arguments.size() == 1) {
+                        inferExpressionType(functionCallNode.arguments.get(0));
+                    }
+                    return "void";
+                case "read_INT":
+                    if (functionCallNode.arguments.size() != 0) {
+                        throw new SemanticException("ArgumentError: read_INT expects no arguments");
+                    }
+                    return "INT";
+                case "read_FLOAT":
+                    if (functionCallNode.arguments.size() != 0) {
+                        throw new SemanticException("ArgumentError: read_FLOAT expects no arguments");
+                    }
+                    return "FLOAT";
+                case "read_STRING":
+                    if (functionCallNode.arguments.size() != 0) {
+                        throw new SemanticException("ArgumentError: read_STRING expects no arguments");
+                    }
+                    return "STRING";
+                case "read_BOOL":
+                    if (functionCallNode.arguments.size() != 0) {
+                        throw new SemanticException("ArgumentError: read_BOOL expects no arguments");
+                    }
+                    return "BOOLEAN";
             }
-            String actual = inferExpressionType(functionCallNode.arguments.get(0));
-            if (!"INT".equals(actual) && !"int".equals(actual)) {
-                throw new SemanticException("ArgumentError: print_INT expects INT but got " + actual);
-            }
-            return "void";
-        }
 
-        if ("print_FLOAT".equals(functionCallNode.name)) {
-            if (functionCallNode.arguments.size() != 1) {
-                throw new SemanticException("ArgumentError: print_FLOAT expects 1 argument");
-            }
-            String actual = inferExpressionType(functionCallNode.arguments.get(0));
-            if (!"FLOAT".equals(actual) && !"float".equals(actual)) {
-                throw new SemanticException("ArgumentError: print_FLOAT expects FLOAT but got " + actual);
-            }
-            return "void";
-        }
+            if (functions.containsKey(functionName)) {
+                FunctionSignature signature = functions.get(functionName);
 
-        if ("print".equals(functionCallNode.name)) {
-            if (functionCallNode.arguments.size() != 1) {
-                throw new SemanticException("ArgumentError: print expects 1 argument");
-            }
-            inferExpressionType(functionCallNode.arguments.get(0));
-            return "void";
-        }
-
-        if ("println".equals(functionCallNode.name)) {
-            if (functionCallNode.arguments.size() > 1) {
-                throw new SemanticException("ArgumentError: println expects 0 or 1 argument");
-            }
-            if (functionCallNode.arguments.size() == 1) {
-                inferExpressionType(functionCallNode.arguments.get(0));
-            }
-            return "void";
-        }
-
-        if (functions.containsKey(functionCallNode.name)) {
-            FunctionSignature signature = functions.get(functionCallNode.name);
-
-            if (signature.getParameterTypes().size() != functionCallNode.arguments.size()) {
-                throw new SemanticException("ArgumentError: wrong number of arguments for function " + functionCallNode.name);
-            }
-
-            for (int i = 0; i < functionCallNode.arguments.size(); i++) {
-                String expected = signature.getParameterTypes().get(i);
-                String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(i)));
-
-                if ("ANY".equals(expected)) {
-                    continue;
+                if (signature.getParameterTypes().size() != functionCallNode.arguments.size()) {
+                    throw new SemanticException("ArgumentError: wrong number of arguments for function " + functionName);
                 }
 
-                expected = normalizeType(expected);
-                if (!sameType(expected, actual)) {
-                    throw new SemanticException("ArgumentError: expected " + expected + " but got " + actual + " in call to " + functionCallNode.name);
+                for (int i = 0; i < functionCallNode.arguments.size(); i++) {
+                    String expected = signature.getParameterTypes().get(i);
+                    String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(i)));
+
+                    if ("ANY".equals(expected)) {
+                        continue;
+                    }
+
+                    expected = normalizeType(expected);
+                    if (!sameType(expected, actual)) {
+                        throw new SemanticException("ArgumentError: expected " + expected + " but got " + actual + " in call to " + functionName);
+                    }
+                }
+
+                return normalizeType(signature.getReturnType());
+            }
+
+            if (collectionConstructorTypes.containsKey(functionName)) {
+                List<String> expectedTypes = collectionConstructorTypes.get(functionName);
+
+                if (expectedTypes.size() != functionCallNode.arguments.size()) {
+                    throw new SemanticException("ArgumentError: wrong number of arguments for collection constructor " + functionName);
+                }
+
+                for (int i = 0; i < functionCallNode.arguments.size(); i++) {
+                    String expected = normalizeType(expectedTypes.get(i));
+                    String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(i)));
+                    if (!sameType(expected, actual)) {
+                        throw new SemanticException("ArgumentError: expected " + expected + " but got " + actual + " in constructor " + functionName);
+                    }
+                }
+
+                return functionName;
+            }
+
+            Scope.VariableInfo variableInfo = currentScope.resolveVariable(functionName);
+            if (variableInfo != null) {
+                if ("FUNC".equals(variableInfo.type)) {
+                    if (variableInfo.functionTarget != null) {
+                        FunctionCallNode resolvedCall = new FunctionCallNode(new IdentifierNode(variableInfo.functionTarget), functionCallNode.arguments);
+                        return inferFunctionCallType(resolvedCall);
+                    }
+                    return inferFunctionCallTypeForUnknownFUNCVariable(functionCallNode);
+                }
+                if (isFunctionType(variableInfo.type)) {
+                    FunctionType functionTypeInfo = parseFunctionType(variableInfo.type);
+                    validateFunctionCallArguments(functionCallNode, functionTypeInfo);
+                    if (variableInfo.functionTarget != null) {
+                        FunctionCallNode resolvedCall = new FunctionCallNode(new IdentifierNode(variableInfo.functionTarget), functionCallNode.arguments);
+                        return inferFunctionCallType(resolvedCall);
+                    }
+                    return functionTypeInfo.returnType;
                 }
             }
 
-            return normalizeType(signature.getReturnType());
+            throw new SemanticException("ScopeError: unknown function or collection " + functionName);
         }
 
-        if (collectionConstructorTypes.containsKey(functionCallNode.name)) {
-            List<String> expectedTypes = collectionConstructorTypes.get(functionCallNode.name);
-
-            if (expectedTypes.size() != functionCallNode.arguments.size()) {
-                throw new SemanticException("ArgumentError: wrong number of arguments for collection constructor " + functionCallNode.name);
-            }
-
-            for (int i = 0; i < functionCallNode.arguments.size(); i++) {
-                String expected = normalizeType(expectedTypes.get(i));
-                String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(i)));
-                if (!sameType(expected, actual)) {
-                    throw new SemanticException("ArgumentError: expected " + expected + " but got " + actual + " in constructor " + functionCallNode.name);
-                }
-            }
-
-            return functionCallNode.name;
+        String functionType = inferExpressionType(functionCallNode.getFunction());
+        if (isFunctionType(functionType)) {
+            FunctionType functionTypeInfo = parseFunctionType(functionType);
+            validateFunctionCallArguments(functionCallNode, functionTypeInfo);
+            return functionTypeInfo.returnType;
         }
 
-        throw new SemanticException("ScopeError: unknown function or collection " + functionCallNode.name);
+        if ("FUNC".equals(functionType)) {
+            return "FUNC";
+        }
+
+        throw new SemanticException("TypeError: attempted to call non-function expression of type " + functionType);
     }
 
     private String inferOperationType(OperationNode operationNode) {
@@ -578,7 +774,17 @@ public class SemanticAnalyzer {
     }
 
     private boolean sameType(String left, String right) {
-        return normalizeType(left).equals(normalizeType(right));
+        left = normalizeType(left);
+        right = normalizeType(right);
+
+        if ("FUNC".equals(left) && isFunctionType(right)) {
+            return true;
+        }
+        if ("FUNC".equals(right) && isFunctionType(left)) {
+            return true;
+        }
+
+        return left.equals(right);
     }
 
     private boolean typeExists(String type) {
@@ -593,6 +799,22 @@ public class SemanticAnalyzer {
             return typeExists(elementType);
         }
 
+        if (isFunctionType(normalized)) {
+            FunctionType functionType = parseFunctionType(normalized);
+            if (functionType == null) {
+                return false;
+            }
+            if (!typeExists(functionType.returnType)) {
+                return false;
+            }
+            for (String parameterType : functionType.parameterTypes) {
+                if (!typeExists(parameterType)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         return false;
     }
 
@@ -601,6 +823,7 @@ public class SemanticAnalyzer {
             return "void";
         }
 
+        type = type.trim();
         if ("BOOL".equals(type)) {
             return "BOOLEAN";
         }
@@ -609,7 +832,151 @@ public class SemanticAnalyzer {
             return "BOOLEAN[]";
         }
 
+        if (type.endsWith("[]")) {
+            return normalizeType(type.substring(0, type.length() - 2)) + "[]";
+        }
+
+        if (isFunctionType(type)) {
+            FunctionType functionType = parseFunctionType(type);
+            if (functionType == null) {
+                return type;
+            }
+            StringBuilder builder = new StringBuilder("(");
+            builder.append(String.join(",", functionType.parameterTypes));
+            builder.append(")->");
+            builder.append(functionType.returnType);
+            return builder.toString();
+        }
+
         return type;
+    }
+
+    private boolean isFunctionType(String type) {
+        if (type == null) {
+            return false;
+        }
+        type = type.trim();
+        return type.startsWith("(") && type.contains(")->");
+    }
+
+    private FunctionType parseFunctionType(String type) {
+        type = type.trim();
+        if (!type.startsWith("(")) {
+            return null;
+        }
+
+        int depth = 0;
+        int index = 1;
+        while (index < type.length()) {
+            char c = type.charAt(index);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                if (depth == 0) {
+                    break;
+                }
+                depth--;
+            }
+            index++;
+        }
+
+        if (index >= type.length() || type.charAt(index) != ')') {
+            return null;
+        }
+
+        int arrowIndex = index + 1;
+        if (arrowIndex >= type.length() || type.charAt(arrowIndex) != '-') {
+            return null;
+        }
+        arrowIndex++;
+        if (arrowIndex >= type.length() || type.charAt(arrowIndex) != '>') {
+            return null;
+        }
+
+        String paramsText = type.substring(1, index).trim();
+        String returnText = type.substring(arrowIndex + 1).trim();
+        if (returnText.isEmpty()) {
+            return null;
+        }
+
+        List<String> parameterTypes = new ArrayList<>();
+        if (!paramsText.isEmpty()) {
+            int start = 0;
+            depth = 0;
+            for (int i = 0; i < paramsText.length(); i++) {
+                char c = paramsText.charAt(i);
+                if (c == '(') {
+                    depth++;
+                } else if (c == ')') {
+                    depth--;
+                } else if (c == ',' && depth == 0) {
+                    parameterTypes.add(normalizeType(paramsText.substring(start, i).trim()));
+                    start = i + 1;
+                }
+            }
+            parameterTypes.add(normalizeType(paramsText.substring(start).trim()));
+        }
+
+        FunctionType functionType = new FunctionType();
+        functionType.parameterTypes = parameterTypes;
+        functionType.returnType = normalizeType(returnText);
+        return functionType;
+    }
+
+    private void validateFunctionCallArguments(FunctionCallNode functionCallNode, FunctionType functionTypeInfo) {
+        if (functionTypeInfo.parameterTypes.size() != functionCallNode.arguments.size()) {
+            throw new SemanticException("ArgumentError: wrong number of arguments for function type");
+        }
+
+        for (int i = 0; i < functionCallNode.arguments.size(); i++) {
+            String expected = normalizeType(functionTypeInfo.parameterTypes.get(i));
+            String actual = normalizeType(inferExpressionType(functionCallNode.arguments.get(i)));
+            if (!sameType(expected, actual)) {
+                throw new SemanticException("ArgumentError: expected " + expected + " but got " + actual + " in function type call");
+            }
+        }
+    }
+
+    private String inferFunctionCallTypeForUnknownFUNCVariable(FunctionCallNode functionCallNode) {
+        List<String> argumentTypes = new ArrayList<>();
+        for (ExpressionNode argument : functionCallNode.arguments) {
+            argumentTypes.add(normalizeType(inferExpressionType(argument)));
+        }
+
+        String returnType = null;
+        for (FunctionSignature function : functions.values()) {
+            if (function.getParameterTypes().size() != argumentTypes.size()) {
+                continue;
+            }
+            boolean match = true;
+            for (int i = 0; i < argumentTypes.size(); i++) {
+                String expected = normalizeType(function.getParameterTypes().get(i));
+                if (!sameType(expected, argumentTypes.get(i))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) {
+                continue;
+            }
+
+            String candidateReturn = normalizeType(function.getReturnType());
+            if (returnType == null) {
+                returnType = candidateReturn;
+            } else if (!sameType(returnType, candidateReturn)) {
+                throw new SemanticException("TypeError: ambiguous return type for FUNC call " + functionCallNode.getName());
+            }
+        }
+
+        if (returnType == null) {
+            throw new SemanticException("TypeError: cannot call FUNC variable without a known target for " + functionCallNode.getName());
+        }
+        return returnType;
+    }
+
+    private static class FunctionType {
+        List<String> parameterTypes;
+        String returnType;
     }
 
     private boolean isReservedName(String name) {

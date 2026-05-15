@@ -10,6 +10,7 @@ public class Parser {
     private final Lexer lexer;
     private Symbol current;
     private Symbol next;
+    private final java.util.List<Symbol> lookahead = new java.util.ArrayList<>();
 
     public Parser(Lexer lexer) {
         this.lexer = lexer;
@@ -19,7 +20,30 @@ public class Parser {
 
     private void advance() {
         current = next;
-        next = lexer.getNextSymbol();
+        if (lookahead.isEmpty()) {
+            next = lexer.getNextSymbol();
+        } else {
+            next = lookahead.remove(0);
+        }
+    }
+
+    private Symbol peek(int offset) {
+        if (offset == 0) {
+            return current;
+        }
+        if (offset == 1) {
+            return next;
+        }
+
+        int index = offset - 2;
+        while (lookahead.size() <= index) {
+            Symbol symbol = lexer.getNextSymbol();
+            lookahead.add(symbol);
+            if (symbol == null || symbol.getType() == Symbol.TokenType.EOF) {
+                break;
+            }
+        }
+        return lookahead.size() > index ? lookahead.get(index) : null;
     }
 
     private boolean check(Symbol.TokenType type) {
@@ -84,7 +108,7 @@ public class Parser {
         if (s == null) return false;
 
         String lex = lexemeOf(s);
-        if ("INT".equals(lex) || "FLOAT".equals(lex) || "STRING".equals(lex) || "BOOLEAN".equals(lex) || "BOOL".equals(lex)) {
+        if ("INT".equals(lex) || "FLOAT".equals(lex) || "STRING".equals(lex) || "BOOLEAN".equals(lex) || "BOOL".equals(lex) || "FUNC".equals(lex)) {
             return true;
         }
 
@@ -114,7 +138,16 @@ public class Parser {
     }
 
     private boolean startsAssignment() {
-        return check(Symbol.TokenType.IDENTIFIER) && checkNext(Symbol.TokenType.ASSIGN);
+        if (!check(Symbol.TokenType.IDENTIFIER)) {
+            return false;
+        }
+        Symbol.TokenType nextType = next.getType();
+        return nextType == Symbol.TokenType.ASSIGN
+            || nextType == Symbol.TokenType.PLUS_ASSIGN
+            || nextType == Symbol.TokenType.MINUS_ASSIGN
+            || nextType == Symbol.TokenType.STAR_ASSIGN
+            || nextType == Symbol.TokenType.SLASH_ASSIGN
+            || nextType == Symbol.TokenType.MOD_ASSIGN;
     }
 
     private boolean startsExpression() {
@@ -273,6 +306,31 @@ public class Parser {
     }
 
     private String parseType() {
+        if (check(Symbol.TokenType.LPAREN)) {
+            advance();
+            List<String> parameterTypes = new ArrayList<>();
+            if (!check(Symbol.TokenType.RPAREN)) {
+                while (true) {
+                    parameterTypes.add(parseType());
+                    if (!match(Symbol.TokenType.COMMA)) {
+                        break;
+                    }
+                }
+            }
+            expect(Symbol.TokenType.RPAREN, "Expected ')' after function type parameter list");
+            if (!match(Symbol.TokenType.RARROW)) {
+                expect(Symbol.TokenType.MINUS, "Expected '-' in function type");
+                expect(Symbol.TokenType.GT, "Expected '>' after '-' in function type");
+            }
+            String returnType = parseType();
+            String type = "(" + String.join(",", parameterTypes) + ")->" + returnType;
+            if (match(Symbol.TokenType.LBRACKET)) {
+                expect(Symbol.TokenType.RBRACKET, "Expected ']' after '[' in array type");
+                type = type + "[]";
+            }
+            return type;
+        }
+
         if (!isTypeToken(current)) {
             throw new ParseException("Expected type keyword | found: " + current);
         }
@@ -291,9 +349,21 @@ public class Parser {
     private AssignmentNode parseAssignment() {
         String identifier = lexemeOf(current);
         expect(Symbol.TokenType.IDENTIFIER, "Expected identifier on left side of assignment");
-        expect(Symbol.TokenType.ASSIGN, "Expected '=' in assignment");
+
+        Symbol.TokenType operator = current.getType();
+        if (operator == Symbol.TokenType.ASSIGN ||
+            operator == Symbol.TokenType.PLUS_ASSIGN ||
+            operator == Symbol.TokenType.MINUS_ASSIGN ||
+            operator == Symbol.TokenType.STAR_ASSIGN ||
+            operator == Symbol.TokenType.SLASH_ASSIGN ||
+            operator == Symbol.TokenType.MOD_ASSIGN) {
+            advance();
+        } else {
+            throw new ParseException("Expected assignment operator, got " + current);
+        }
+
         ExpressionNode value = parseExpression();
-        return new AssignmentNode(identifier, value);
+        return new AssignmentNode(identifier, value, operator);
     }
 
     private IfNode parseIfStatement() {
@@ -469,10 +539,15 @@ public class Parser {
     }
 
     private ExpressionNode parsePrimary() {
-        if (match(Symbol.TokenType.LPAREN)) {
-            ExpressionNode expr = parseExpression();
-            expect(Symbol.TokenType.RPAREN, "Expected ')' after expression");
-            return parsePostfix(expr);
+        if (check(Symbol.TokenType.LPAREN)) {
+            if (isLambdaStart()) {
+                return parseLambdaExpression();
+            }
+            if (match(Symbol.TokenType.LPAREN)) {
+                ExpressionNode expr = parseExpression();
+                expect(Symbol.TokenType.RPAREN, "Expected ')' after expression");
+                return parsePostfix(expr);
+            }
         }
 
         if (isLiteral(current)) {
@@ -507,7 +582,7 @@ public class Parser {
             if (match(Symbol.TokenType.LPAREN)) {
                 List<ExpressionNode> arguments = parseArguments();
                 expect(Symbol.TokenType.RPAREN, "Expected ')' after arguments");
-                expr = new FunctionCallNode(name, arguments);
+                expr = new FunctionCallNode(new IdentifierNode(name), arguments);
             } else {
                 expr = new IdentifierNode(name);
             }
@@ -516,6 +591,62 @@ public class Parser {
         }
 
         throw new ParseException("Expected primary expression, found: " + current);
+    }
+
+    private boolean isLambdaStart() {
+        if (!check(Symbol.TokenType.LPAREN)) {
+            return false;
+        }
+
+        int depth = 0;
+        int offset = 1;
+        Symbol symbol = peek(offset);
+        while (symbol != null) {
+            if (symbol.getType() == Symbol.TokenType.LPAREN) {
+                depth++;
+            } else if (symbol.getType() == Symbol.TokenType.RPAREN) {
+                if (depth == 0) {
+                    return peek(offset + 1) != null && peek(offset + 1).getType() == Symbol.TokenType.RARROW;
+                }
+                depth--;
+            }
+            offset++;
+            symbol = peek(offset);
+        }
+        return false;
+    }
+
+    private ExpressionNode parseLambdaExpression() {
+        expect(Symbol.TokenType.LPAREN, "Expected '(' to start lambda parameters");
+
+        List<VarDeclarationNode> parameters = new ArrayList<>();
+        if (!check(Symbol.TokenType.RPAREN)) {
+            while (true) {
+                String type = parseType();
+                String identifier = lexemeOf(current);
+                expect(Symbol.TokenType.IDENTIFIER, "Expected lambda parameter name");
+                parameters.add(new VarDeclarationNode(false, type, identifier, null));
+                if (!match(Symbol.TokenType.COMMA)) {
+                    break;
+                }
+            }
+        }
+
+        expect(Symbol.TokenType.RPAREN, "Expected ')' after lambda parameters");
+        if (!match(Symbol.TokenType.RARROW)) {
+            expect(Symbol.TokenType.MINUS, "Expected '-' in lambda arrow");
+            expect(Symbol.TokenType.GT, "Expected '>' after '-' in lambda arrow");
+        }
+
+        ExpressionNode expressionBody = null;
+        List<StatementNode> blockBody = null;
+        if (check(Symbol.TokenType.LBRACE)) {
+            blockBody = parseBlockStatements();
+        } else {
+            expressionBody = parseExpression();
+        }
+
+        return parsePostfix(new LambdaNode(parameters, expressionBody, blockBody));
     }
 
     private ExpressionNode parsePostfix(ExpressionNode expr) {
